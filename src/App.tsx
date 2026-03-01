@@ -1439,6 +1439,21 @@ function App() {
     triggerHaptic();
   };
 
+  const deleteWorkoutEntry = (workout: Workout) => {
+    if (workout.id.startsWith("backfill-day-")) {
+      const dayKey = workout.id.replace("backfill-day-", "");
+      setBackfillSessions((prev) =>
+        prev.filter((session) => getDayKey(session.date) !== dayKey),
+      );
+      triggerHaptic();
+      return;
+    }
+
+    setHistory((prev) => prev.filter((item) => item.id !== workout.id));
+    setCurrentWorkout((prev) => (prev?.id === workout.id ? null : prev));
+    triggerHaptic();
+  };
+
   const filteredCommonExercises = commonExercises.filter((exercise) =>
     exercise.toLowerCase().includes(exerciseSearch.toLowerCase().trim()),
   );
@@ -1989,7 +2004,17 @@ function App() {
     return (
       <div className="flex h-full flex-col gap-3">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-2xl font-semibold">Exercises</h2>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              className="h-10 px-2 text-muted-foreground"
+              onClick={() => setActiveTab("dashboard")}
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Back
+            </Button>
+            <h2 className="text-2xl font-semibold">Exercises</h2>
+          </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" className="h-10 border-emerald-600/30" onClick={() => setIsDashboardManageOpen(true)}>
               Dashboard
@@ -2282,7 +2307,17 @@ function App() {
 
   const renderWorkouts = () => (
     <div className="space-y-6">
-      <h2 className="text-2xl font-semibold">Workouts</h2>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          className="h-10 px-2 text-muted-foreground"
+          onClick={() => setActiveTab("dashboard")}
+        >
+          <ChevronLeft className="h-4 w-4" />
+          Back
+        </Button>
+        <h2 className="text-2xl font-semibold">Workouts</h2>
+      </div>
       {renderCurrentWorkout()}
 
       <div>
@@ -2305,13 +2340,22 @@ function App() {
                         {new Date(workout.date).toLocaleDateString()} • {workout.exercises.length} exercises
                       </p>
                     </div>
-                    <Button
-                      variant="outline"
-                      className="h-11 min-w-11 border-emerald-600/30"
-                      onClick={() => startWorkout(workout)}
-                    >
-                      Use as Template
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        className="h-11 min-w-11 border-emerald-600/30"
+                        onClick={() => startWorkout(workout)}
+                      >
+                        Use as Template
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="h-11 min-w-11 text-red-400 hover:text-red-300"
+                        onClick={() => deleteWorkoutEntry(workout)}
+                      >
+                        Delete
+                      </Button>
+                    </div>
                   </div>
                 </CardHeader>
               </Card>
@@ -2324,7 +2368,17 @@ function App() {
 
   const renderProfile = () => (
     <div className="space-y-4">
-      <h2 className="text-2xl font-semibold">Profile</h2>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          className="h-10 px-2 text-muted-foreground"
+          onClick={() => setActiveTab("dashboard")}
+        >
+          <ChevronLeft className="h-4 w-4" />
+          Back
+        </Button>
+        <h2 className="text-2xl font-semibold">Profile</h2>
+      </div>
 
       <Card className="gradient-card">
         <CardHeader className="pb-2">
