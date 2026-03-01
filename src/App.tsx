@@ -1585,6 +1585,43 @@ function App() {
   }, [backfillExerciseName, backfillSessions, workoutBasedSessions]);
 
   const renderDashboard = () => {
+    const dashboardRows = [
+      ...orderedDashboardMetrics.map((metric) => ({
+        key: `metric-${metric.id}`,
+        kind: "metric" as const,
+        trend: metric.trend,
+        title: metric.title,
+        value: metric.value,
+        goalKey: metric.id,
+        goalText: dashboardGoals[metric.id]
+          ? `Goal: ${dashboardGoals[metric.id]} ${metric.goalUnit}${
+              metric.id === "bodyweight_trend"
+                ? ` (${dashboardGoalDirection[metric.id] ?? "decrease"})`
+                : ""
+            }`
+          : null,
+        onPrimaryAction:
+          metric.id === "bodyweight_trend" ? openBodyweightDialog : () => openGoalEditor(metric.id, metric.title),
+        isBodyweight: metric.id === "bodyweight_trend",
+      })),
+      ...dashboardTrackedExercises.map((exercise) => ({
+        key: `exercise-${exercise.key}`,
+        kind: "exercise" as const,
+        trend: exercise.trend,
+        title: exercise.name,
+        value: exercise.workingSet,
+        goalKey: `exercise:${exercise.key}`,
+        goalText: dashboardGoals[`exercise:${exercise.key}`]
+          ? `Goal: ${dashboardGoals[`exercise:${exercise.key}`]} (${units})`
+          : null,
+        onPrimaryAction: () => {
+          setActiveTab("exercises");
+          setSelectedExerciseKey(exercise.key);
+        },
+        isBodyweight: false,
+      })),
+    ];
+
     return (
       <div className="flex h-full flex-col gap-3">
         <div className="flex items-center justify-between">
@@ -1600,111 +1637,70 @@ function App() {
           </Button>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-          {orderedDashboardMetrics.map((metric, index) => (
-            <div
-              key={metric.id}
-              className="rounded-xl border border-border/70 bg-gradient-to-br from-card to-emerald-950/10 p-2.5"
-            >
-              <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3">
-                <div>{renderTrendIcon(metric.trend)}</div>
-                <div className="min-w-0">
-                  <p className="truncate text-xs uppercase tracking-wide text-muted-foreground">{metric.title}</p>
-                  <p className="truncate text-2xl font-bold leading-none tabular-nums">{metric.value}</p>
-                  {dashboardGoals[metric.id] ? (
-                    <p className="text-xs text-cyan-300/90">
-                      Goal: {dashboardGoals[metric.id]} {metric.goalUnit}
-                      {metric.id === "bodyweight_trend"
-                        ? ` (${dashboardGoalDirection[metric.id] ?? "decrease"})`
-                        : ""}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {dashboardRows.length > 0 ? (
+            <div className="overflow-hidden rounded-2xl border border-border/70 bg-gradient-to-br from-card to-emerald-950/10 divide-y divide-border/60">
+              {dashboardRows.map((row, index) => (
+                <div key={row.key} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-3 py-3">
+                  <div>{renderTrendIcon(row.trend)}</div>
+                  <button type="button" className="min-w-0 text-left" onClick={row.onPrimaryAction}>
+                    <p className={`truncate ${row.kind === "exercise" ? "text-xl" : "text-xs uppercase tracking-wide text-muted-foreground"} font-semibold`}>
+                      {row.title}
                     </p>
-                  ) : null}
-                </div>
-                <div className="flex flex-col gap-1">
-                  {metric.id === "bodyweight_trend" ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 rounded-md text-cyan-300"
-                      onClick={openBodyweightDialog}
-                      aria-label="Log bodyweight"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                    </Button>
-                  ) : null}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 rounded-md text-cyan-300"
-                    onClick={() => openGoalEditor(metric.id, metric.title)}
-                  >
-                    <Target className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 rounded-md text-muted-foreground"
-                    onClick={() => moveMetricByDirection(metric.id, "up")}
-                    disabled={index === 0}
-                  >
-                    <ChevronUp className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 rounded-md text-muted-foreground"
-                    onClick={() => moveMetricByDirection(metric.id, "down")}
-                    disabled={index === orderedDashboardMetrics.length - 1}
-                  >
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ))}
-
-          {dashboardTrackedExercises.map((exercise) => {
-            const goalKey = `exercise:${exercise.key}`;
-            return (
-              <div
-                key={`dash-ex-${exercise.key}`}
-                className="rounded-xl border border-border/70 bg-gradient-to-br from-card to-emerald-950/10 p-2.5"
-              >
-                <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3">
-                  <div>{renderTrendIcon(exercise.trend)}</div>
-                  <button
-                    type="button"
-                    className="min-w-0 text-left"
-                    onClick={() => {
-                      setActiveTab("exercises");
-                      setSelectedExerciseKey(exercise.key);
-                    }}
-                  >
-                    <p className="truncate text-lg font-semibold">{exercise.name}</p>
-                    <p className="truncate text-base font-semibold tabular-nums">{exercise.workingSet}</p>
-                    {dashboardGoals[goalKey] ? (
-                      <p className="text-xs text-cyan-300/90">Goal: {dashboardGoals[goalKey]} ({units})</p>
-                    ) : null}
+                    <p className="truncate text-2xl font-bold leading-none tabular-nums">{row.value}</p>
+                    {row.goalText ? <p className="text-xs text-cyan-300/90">{row.goalText}</p> : null}
                   </button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 rounded-md text-cyan-300"
-                    onClick={() => openGoalEditor(goalKey, exercise.name)}
-                  >
-                    <Target className="h-3.5 w-3.5" />
-                  </Button>
+                  <div className="flex flex-col items-end gap-1">
+                    {row.kind === "metric" ? (
+                      <>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 rounded-md text-cyan-300"
+                          onClick={row.onPrimaryAction}
+                        >
+                          {row.isBodyweight ? <Plus className="h-3.5 w-3.5" /> : <Target className="h-3.5 w-3.5" />}
+                        </Button>
+                        <div className="flex gap-1">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 rounded-md text-muted-foreground"
+                            onClick={() => moveMetricByDirection(row.goalKey as DashboardMetricId, "up")}
+                            disabled={index === 0}
+                          >
+                            <ChevronUp className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 rounded-md text-muted-foreground"
+                            onClick={() => moveMetricByDirection(row.goalKey as DashboardMetricId, "down")}
+                            disabled={index === orderedDashboardMetrics.length - 1}
+                          >
+                            <ChevronDown className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 rounded-md text-cyan-300"
+                        onClick={() => openGoalEditor(row.goalKey, row.title)}
+                      >
+                        <Target className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-
-          {orderedDashboardMetrics.length === 0 && dashboardTrackedExercises.length === 0 ? (
+              ))}
+            </div>
+          ) : (
             <Card className="border-border/70 bg-card/70">
               <CardContent className="py-10 text-center text-muted-foreground">
                 No dashboard items selected.
@@ -1712,7 +1708,7 @@ function App() {
                 Tap Manage to choose what to track.
               </CardContent>
             </Card>
-          ) : null}
+          )}
         </div>
       </div>
     );
@@ -1804,7 +1800,7 @@ function App() {
               </div>
             </div>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-2 px-2 pb-2">
             <div className="grid grid-cols-3 gap-2">
               <Button
                 variant={exerciseVizMode === "set_map" ? "default" : "outline"}
@@ -1857,13 +1853,13 @@ function App() {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    <div className="grid grid-cols-[36px_1fr] gap-2">
-                      <div className="flex h-56 flex-col justify-between text-[11px] text-muted-foreground">
+                    <div className="grid grid-cols-[34px_1fr] gap-1">
+                      <div className="flex h-64 flex-col justify-between text-[11px] text-muted-foreground">
                         {rmScale.ticks.map((tick, idx) => (
                           <span key={`rm-${idx}`}>{tick}</span>
                         ))}
                       </div>
-                      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-56 w-full">
+                      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-64 w-full">
                         {[26, 50, 74].map((line) => (
                           <line
                             key={line}
@@ -1907,13 +1903,13 @@ function App() {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    <div className="grid grid-cols-[36px_1fr] gap-2">
-                      <div className="flex h-56 flex-col justify-between text-[11px] text-muted-foreground">
+                    <div className="grid grid-cols-[34px_1fr] gap-1">
+                      <div className="flex h-64 flex-col justify-between text-[11px] text-muted-foreground">
                         {weightScale.ticks.map((tick, idx) => (
                           <span key={`set-${idx}`}>{tick}</span>
                         ))}
                       </div>
-                      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-56 w-full">
+                      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-64 w-full">
                         {[26, 50, 74].map((line) => (
                           <line
                             key={line}
@@ -2124,13 +2120,14 @@ function App() {
             </CardContent>
           </Card>
         ) : (
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="overflow-hidden rounded-2xl border border-border/70 bg-gradient-to-br from-card to-emerald-950/10 divide-y divide-border/60">
             {trackedExercises.map((exercise) => {
               const isTrackedOnDashboard = trackedDashboardExercises.includes(exercise.key);
               return (
                 <div
                   key={exercise.key}
-                  className="rounded-xl border border-border/70 bg-gradient-to-br from-card to-emerald-950/10 p-2.5"
+                  className="px-3 py-3"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <button
@@ -2157,13 +2154,14 @@ function App() {
                   </div>
 
                   {exercise.totalSets < 2 && (
-                    <p className="mt-2 text-xs text-muted-foreground">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       Add at least 2 sets to unlock trend charts.
                     </p>
                   )}
                 </div>
               );
             })}
+            </div>
           </div>
         )}
       </div>
@@ -2590,21 +2588,21 @@ function App() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <main className="mx-auto h-[calc(100vh-8.25rem)] w-full max-w-2xl overflow-hidden px-4 pt-6 pb-4">
+      <main className="mx-auto h-[calc(100vh-8.2rem)] w-full max-w-5xl overflow-hidden px-2 pt-3 pb-2 sm:px-3 sm:pt-4">
         {activeTab === "dashboard" && renderDashboard()}
         {activeTab === "exercises" && renderExercises()}
         {activeTab === "workouts" && renderWorkouts()}
         {activeTab === "profile" && renderProfile()}
       </main>
 
-      <nav className="safe-area-nav fixed inset-x-0 bottom-0 z-50 border-t border-border/80 bg-background/95 backdrop-blur-xl">
-        <div className="mx-auto w-full max-w-2xl px-4 pt-2">
-          <div className="grid grid-cols-5 items-end gap-0">
+      <nav className="safe-area-nav fixed inset-x-0 bottom-0 z-50 border-t border-border/70 bg-background/95 backdrop-blur-xl">
+        <div className="mx-auto w-full max-w-5xl px-2 pt-2 sm:px-3">
+          <div className="grid grid-cols-5 items-end gap-1 rounded-2xl border border-border/70 bg-card/50 px-1 py-1.5">
             <Button
               variant="ghost"
               className={`h-14 w-full flex-col gap-1 rounded-xl px-1 ${
                 activeTab === "dashboard"
-                  ? "bg-gradient-to-br from-emerald-500/20 to-cyan-500/15 text-emerald-400"
+                  ? "bg-background/90 text-emerald-400 shadow-sm"
                   : "text-muted-foreground"
               }`}
               onClick={() => setActiveTab("dashboard")}
@@ -2617,7 +2615,7 @@ function App() {
               variant="ghost"
               className={`h-14 w-full flex-col gap-1 rounded-xl px-1 ${
                 activeTab === "exercises"
-                  ? "bg-gradient-to-br from-emerald-500/20 to-cyan-500/15 text-emerald-400"
+                  ? "bg-background/90 text-emerald-400 shadow-sm"
                   : "text-muted-foreground"
               }`}
               onClick={() => setActiveTab("exercises")}
@@ -2628,7 +2626,7 @@ function App() {
 
             <div className="flex justify-center">
               <Button
-                className="h-16 w-16 -translate-y-4 rounded-full border border-emerald-300/20 bg-gradient-to-br from-emerald-500 via-emerald-600 to-cyan-600 text-white shadow-xl shadow-emerald-900/50 transition-transform duration-200 hover:scale-[1.02] active:scale-95"
+                className="h-16 w-16 -translate-y-3 rounded-full border border-emerald-300/30 bg-gradient-to-br from-emerald-500 via-emerald-600 to-cyan-600 text-white shadow-lg shadow-emerald-900/45 transition-transform duration-200 hover:scale-[1.02] active:scale-95"
                 onClick={() => setIsQuickStartOpen(true)}
               >
                 <Plus className="h-7 w-7" />
@@ -2639,7 +2637,7 @@ function App() {
               variant="ghost"
               className={`h-14 w-full flex-col gap-1 rounded-xl px-1 ${
                 activeTab === "workouts"
-                  ? "bg-gradient-to-br from-emerald-500/20 to-cyan-500/15 text-emerald-400"
+                  ? "bg-background/90 text-emerald-400 shadow-sm"
                   : "text-muted-foreground"
               }`}
               onClick={() => setActiveTab("workouts")}
@@ -2652,7 +2650,7 @@ function App() {
               variant="ghost"
               className={`h-14 w-full flex-col gap-1 rounded-xl px-1 ${
                 activeTab === "profile"
-                  ? "bg-gradient-to-br from-emerald-500/20 to-cyan-500/15 text-emerald-400"
+                  ? "bg-background/90 text-emerald-400 shadow-sm"
                   : "text-muted-foreground"
               }`}
               onClick={() => setActiveTab("profile")}
