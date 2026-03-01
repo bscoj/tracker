@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ChevronDown,
-  ChevronLeft,
   ChevronUp,
   Clock,
   Dumbbell,
@@ -1076,6 +1075,17 @@ function App() {
     setExerciseVizMode("set_map");
   };
 
+  const navigateToTab = (tab: Tab) => {
+    setActiveTab(tab);
+    if (tab === "exercises") {
+      setSelectedExerciseKey(null);
+      setEditingSessionId(null);
+      return;
+    }
+    setSelectedExerciseKey(null);
+    setEditingSessionId(null);
+  };
+
   const changeExerciseVizMode = (mode: VizMode) => {
     setExerciseVizMode(mode);
   };
@@ -1718,6 +1728,9 @@ function App() {
     const hasEnoughData = exercise.totalSets >= 2;
     const sessions = exercise.sessions;
     const latestSession = sessions[sessions.length - 1];
+    const latestSessionTotalReps = latestSession
+      ? latestSession.sets.reduce((sum, set) => sum + set.reps, 0)
+      : 0;
     const sortedSessions = [...sessions].sort(
       (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
     );
@@ -1731,12 +1744,14 @@ function App() {
         reps: set.reps,
       })),
     );
+    const sessionRepWeightedWeight = sessions.map((session) => {
+      const repTotal = Math.max(1, session.sets.reduce((sum, set) => sum + set.reps, 0));
+      const weighted = session.sets.reduce((sum, set) => sum + set.weight * set.reps, 0) / repTotal;
+      return weighted;
+    });
 
     const rmScale = buildChartScale(
       sessions.length > 0 ? sessions.map((item) => item.est1RM) : [0],
-    );
-    const adjustedScale = buildChartScale(
-      sessions.length > 0 ? sessions.map((item) => item.adjustedScore) : [0],
     );
     const weightScale = buildChartScale(
       allSets.length > 0 ? allSets.map((set) => set.weight) : [0],
@@ -1748,30 +1763,19 @@ function App() {
       .map((session, index) => `${getX(index, sessions.length)},${rmScale.toY(session.est1RM)}`)
       .join(" ");
 
-    const adjustedLinePoints = sessions
-      .map(
-        (session, index) => `${getX(index, sessions.length)},${adjustedScale.toY(session.adjustedScore)}`,
-      )
+    const weightedLinePoints = sessionRepWeightedWeight
+      .map((value, index) => `${getX(index, sessions.length)},${weightScale.toY(value)}`)
       .join(" ");
 
     const chartInfo = {
       one_rm: "Estimated 1RM uses Brzycki: weight × (36 / (37 - reps)).",
       set_map:
-        "Y-axis is weight. Hollow circles show each set and the white line tracks session-to-session adjusted score.",
+        "Y-axis is weight. Hollow circles are sets (size scales with reps), white line is rep-weighted average load by session.",
       data: "Edit individual logged sessions inline. Changes update trends and dashboard metrics.",
     } as const;
 
     return (
       <div className="flex h-full flex-col gap-3">
-        <Button
-          variant="ghost"
-          className="h-10 w-fit px-2 text-muted-foreground"
-          onClick={() => setSelectedExerciseKey(null)}
-        >
-          <ChevronLeft className="h-4 w-4" />
-          Back
-        </Button>
-
         <Card className="gradient-card flex-1">
           <CardHeader className="pb-1">
             <div className="flex items-center justify-between gap-2">
@@ -1874,8 +1878,8 @@ function App() {
                         <polyline
                           points={sessionLinePoints}
                           fill="none"
-                          stroke="#34d399"
-                          strokeWidth="3"
+                          stroke="rgba(255,255,255,0.92)"
+                          strokeWidth="2"
                           strokeLinejoin="round"
                           strokeLinecap="round"
                         />
@@ -1884,8 +1888,10 @@ function App() {
                             key={session.id}
                             cx={getX(index, sessions.length)}
                             cy={rmScale.toY(session.est1RM)}
-                            r="2.2"
-                            fill="#a7f3d0"
+                            r="1.7"
+                            fill="none"
+                            stroke="rgba(96,165,250,0.95)"
+                            strokeWidth="1.05"
                           />
                         ))}
                       </svg>
@@ -1926,20 +1932,21 @@ function App() {
                           const jitter = ((set.setIndex % 5) - 2) * 1.3;
                           const x = Math.max(11, Math.min(98, xBase + jitter));
                           const y = weightScale.toY(set.weight);
+                          const radius = Math.min(2.6, 1 + set.reps * 0.1);
                           return (
                             <circle
                               key={set.id}
                               cx={x}
                               cy={y}
-                              r="2.3"
+                              r={radius}
                               fill="none"
                               stroke="rgba(96,165,250,0.95)"
-                              strokeWidth="1.1"
+                              strokeWidth="1"
                             />
                           );
                         })}
                         <polyline
-                          points={adjustedLinePoints}
+                          points={weightedLinePoints}
                           fill="none"
                           stroke="rgba(255,255,255,0.92)"
                           strokeWidth="1.4"
@@ -2068,8 +2075,8 @@ function App() {
                   </p>
                 </div>
                 <div>
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Avg Adj Score</p>
-                  <p className="text-base font-semibold tabular-nums">{Math.round(latestSession.adjustedScore)}</p>
+                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Latest Reps</p>
+                  <p className="text-base font-semibold tabular-nums">{latestSessionTotalReps}</p>
                 </div>
                 <div>
                   <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Last Context</p>
@@ -2090,17 +2097,7 @@ function App() {
     return (
       <div className="flex h-full flex-col gap-3">
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              className="h-10 px-2 text-muted-foreground"
-              onClick={() => setActiveTab("dashboard")}
-            >
-              <ChevronLeft className="h-4 w-4" />
-              Back
-            </Button>
-            <h2 className="text-2xl font-semibold">Exercises</h2>
-          </div>
+          <h2 className="text-2xl font-semibold">Exercises</h2>
           <div className="flex items-center gap-2">
             <Button variant="outline" className="h-10 border-emerald-600/30" onClick={() => setIsDashboardManageOpen(true)}>
               Dashboard
@@ -2129,7 +2126,8 @@ function App() {
                   key={exercise.key}
                   className="px-3 py-3"
                 >
-                  <div className="flex items-start justify-between gap-2">
+                  <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3">
+                    <div>{renderTrendIcon(exercise.trend)}</div>
                     <button
                       type="button"
                       className="min-w-0 flex-1 text-left"
@@ -2140,17 +2138,14 @@ function App() {
                       <p className="text-xs text-muted-foreground">{exercise.totalSets} sets logged</p>
                     </button>
 
-                    <div className="flex items-center gap-1">
-                      {renderTrendIcon(exercise.trend)}
-                      <Button
-                        variant={isTrackedOnDashboard ? "default" : "outline"}
-                        size="icon"
-                        className="h-9 w-9 border-emerald-600/30"
-                        onClick={() => toggleTrackedExercise(exercise.key)}
-                      >
-                        <Target className="h-4 w-4" />
-                      </Button>
-                    </div>
+                    <Button
+                      variant={isTrackedOnDashboard ? "default" : "outline"}
+                      size="icon"
+                      className="h-9 w-9 border-emerald-600/30"
+                      onClick={() => toggleTrackedExercise(exercise.key)}
+                    >
+                      <Target className="h-4 w-4" />
+                    </Button>
                   </div>
 
                   {exercise.totalSets < 2 && (
@@ -2383,17 +2378,7 @@ function App() {
 
   const renderWorkouts = () => (
     <div className="space-y-6">
-      <div className="flex items-center gap-2">
-        <Button
-          variant="ghost"
-          className="h-10 px-2 text-muted-foreground"
-          onClick={() => setActiveTab("dashboard")}
-        >
-          <ChevronLeft className="h-4 w-4" />
-          Back
-        </Button>
-        <h2 className="text-2xl font-semibold">Workouts</h2>
-      </div>
+      <h2 className="text-2xl font-semibold">Workouts</h2>
       {renderCurrentWorkout()}
 
       <div>
@@ -2444,17 +2429,7 @@ function App() {
 
   const renderProfile = () => (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Button
-          variant="ghost"
-          className="h-10 px-2 text-muted-foreground"
-          onClick={() => setActiveTab("dashboard")}
-        >
-          <ChevronLeft className="h-4 w-4" />
-          Back
-        </Button>
-        <h2 className="text-2xl font-semibold">Profile</h2>
-      </div>
+      <h2 className="text-2xl font-semibold">Profile</h2>
 
       <Card className="gradient-card">
         <CardHeader className="pb-2">
@@ -2605,7 +2580,7 @@ function App() {
                   ? "bg-background/90 text-emerald-400 shadow-sm"
                   : "text-muted-foreground"
               }`}
-              onClick={() => setActiveTab("dashboard")}
+              onClick={() => navigateToTab("dashboard")}
             >
               <Dumbbell className="h-5 w-5" />
               <span className="text-[11px] leading-none">Dashboard</span>
@@ -2618,7 +2593,7 @@ function App() {
                   ? "bg-background/90 text-emerald-400 shadow-sm"
                   : "text-muted-foreground"
               }`}
-              onClick={() => setActiveTab("exercises")}
+              onClick={() => navigateToTab("exercises")}
             >
               <LineChart className="h-5 w-5" />
               <span className="text-[11px] leading-none">Exercises</span>
@@ -2640,7 +2615,7 @@ function App() {
                   ? "bg-background/90 text-emerald-400 shadow-sm"
                   : "text-muted-foreground"
               }`}
-              onClick={() => setActiveTab("workouts")}
+              onClick={() => navigateToTab("workouts")}
             >
               <Clock className="h-5 w-5" />
               <span className="text-[11px] leading-none">Workouts</span>
@@ -2653,7 +2628,7 @@ function App() {
                   ? "bg-background/90 text-emerald-400 shadow-sm"
                   : "text-muted-foreground"
               }`}
-              onClick={() => setActiveTab("profile")}
+              onClick={() => navigateToTab("profile")}
             >
               <User className="h-5 w-5" />
               <span className="text-[11px] leading-none">Profile</span>
