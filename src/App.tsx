@@ -1887,22 +1887,21 @@ function App() {
                 </div>
               ) : (
                 <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-                  <div className="grid grid-cols-[1.1fr_1fr_1fr_1fr_auto] items-center gap-2 px-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                  <div className="grid grid-cols-[1.2fr_0.7fr_0.9fr_auto] items-center gap-2 px-1 text-[11px] uppercase tracking-wide text-muted-foreground">
                     <span>Date</span>
-                    <span>Top Set</span>
-                    <span>Est. 1RM</span>
-                    <span>Volume</span>
+                    <span>Sets</span>
+                    <span>Reps</span>
                     <span className="text-right">Actions</span>
                   </div>
                   {sortedSessions.map((session) => {
                     const isEditing = editingSessionId === session.id;
+                    const totalReps = session.sets.reduce((sum, set) => sum + set.reps, 0);
                     return (
                       <div key={`session-${session.id}`} className="rounded-md border border-border/60 px-2 py-2">
-                        <div className="grid grid-cols-[1.1fr_1fr_1fr_1fr_auto] items-center gap-2">
+                        <div className="grid grid-cols-[1.2fr_0.7fr_0.9fr_auto] items-center gap-2">
                           <span className="text-sm font-medium">{session.label}</span>
-                          <span className="text-sm">{session.topSet.weight}x{session.topSet.reps}</span>
-                          <span className="text-sm">{Math.round(session.est1RM)}</span>
-                          <span className="text-sm">{Math.round(session.volume)}</span>
+                          <span className="text-sm">{session.sets.length}</span>
+                          <span className="text-sm">{totalReps}</span>
                           <div className="flex items-center justify-end gap-1">
                             {isEditing ? (
                               <>
