@@ -82,15 +82,20 @@ type BackfillSession = {
   contextTag?: SessionContext;
 };
 
+type SessionSource =
+  | { kind: "workout"; workoutId: string; exerciseId: string }
+  | { kind: "backfill"; backfillId: string };
+
 type ExerciseSessionPoint = {
   id: string;
   date: string;
   label: string;
-  sets: Array<{ weight: number; reps: number }>;
+  sets: Array<{ id: string; weight: number; reps: number }>;
   topSet: { weight: number; reps: number };
   est1RM: number;
   adjustedScore: number;
   contextTag?: SessionContext;
+  source: SessionSource;
 };
 
 type TrackedExercise = {
@@ -242,6 +247,10 @@ function toDateInputValue(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+function getDayKey(date: string) {
+  return date.slice(0, 10);
+}
+
 function moveItem<T>(list: T[], fromIndex: number, toIndex: number) {
   if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return list;
   const cloned = [...list];
@@ -363,6 +372,10 @@ function App() {
   const [backfillSetsDraft, setBackfillSetsDraft] = useState<BackfillSet[]>([
     { id: uuidv4(), weight: 0, reps: 0 },
   ]);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [sessionEditDraft, setSessionEditDraft] = useState<Array<{ id: string; weight: number; reps: number }>>(
+    [],
+  );
   const [cloudOptIn, setCloudOptIn] = useState<boolean>(
     () => localStorage.getItem(STORAGE_KEY_CLOUD_OPT_IN) === "true",
   );
@@ -547,7 +560,7 @@ function App() {
       workout.exercises.forEach((exercise) => {
         if (exercise.sets.length === 0) return;
         sessions.push({
-          id: `${workout.id}-${exercise.id}`,
+          id: `${workout.id}::${exercise.id}`,
           exerciseName: exercise.name,
           date: workout.date,
           contextTag: workout.contextTag,
@@ -565,7 +578,20 @@ function App() {
 
   const trackedExercises = useMemo<TrackedExercise[]>(() => {
     const grouped = new Map<string, TrackedExercise>();
-    const combinedSessions = [...workoutBasedSessions, ...backfillSessions].sort(
+    const combinedSessions = [
+      ...workoutBasedSessions.map((session) => ({
+        ...session,
+        source: {
+          kind: "workout" as const,
+          workoutId: session.id.split("::")[0] ?? "",
+          exerciseId: session.id.split("::")[1] ?? "",
+        },
+      })),
+      ...backfillSessions.map((session) => ({
+        ...session,
+        source: { kind: "backfill" as const, backfillId: session.id },
+      })),
+    ].sort(
       (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
     );
 
@@ -590,11 +616,12 @@ function App() {
         id: session.id,
         date: session.date,
         label: formatShortDate(session.date),
-        sets: cleanedSets.map((set) => ({ weight: set.weight, reps: set.reps })),
+        sets: cleanedSets.map((set) => ({ id: set.id, weight: set.weight, reps: set.reps })),
         topSet: { weight: topSet.weight, reps: topSet.reps },
         est1RM: estimate1RM(topSet.weight, topSet.reps),
         adjustedScore,
         contextTag: session.contextTag,
+        source: session.source,
       };
 
       const existing = grouped.get(key);
@@ -689,6 +716,39 @@ function App() {
     () => new Map(trackedExercises.map((exercise) => [exercise.key, exercise])),
     [trackedExercises],
   );
+
+  const workoutsTabHistory = useMemo(() => {
+    const groupedBackfills = new Map<string, BackfillSession[]>();
+    backfillSessions.forEach((session) => {
+      const dayKey = getDayKey(session.date);
+      const bucket = groupedBackfills.get(dayKey) ?? [];
+      bucket.push(session);
+      groupedBackfills.set(dayKey, bucket);
+    });
+
+    const syntheticFromBackfills: Workout[] = Array.from(groupedBackfills.entries()).map(
+      ([dayKey, sessions]) => ({
+        id: `backfill-day-${dayKey}`,
+        date: `${dayKey}T12:00:00.000Z`,
+        name: `Backfilled Workout`,
+        contextTag: "normal",
+        exercises: sessions.map((session, index) => ({
+          id: `backfill-ex-${session.id}-${index}`,
+          name: session.exerciseName,
+          sets: session.sets.map((set, setIndex) => ({
+            id: `backfill-set-${set.id}-${setIndex}`,
+            weight: set.weight,
+            reps: set.reps,
+            completed: true,
+          })),
+        })),
+      }),
+    );
+
+    return [...history, ...syntheticFromBackfills].sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+    );
+  }, [backfillSessions, history]);
 
   const selectedExercise = selectedExerciseKey ? trackedByKey.get(selectedExerciseKey) : undefined;
 
@@ -1231,6 +1291,7 @@ function App() {
     setWorkoutName("");
     setIsFinishDialogOpen(false);
     setActiveTab("workouts");
+    triggerHaptic();
   };
 
   const addExerciseFromExercisesTab = () => {
@@ -1279,11 +1340,118 @@ function App() {
     setBackfillSessions((prev) => [...prev, newSession]);
     setSelectedExerciseKey(normalized);
     setIsBackfillDialogOpen(false);
+    triggerHaptic();
+  };
+
+  const beginSessionEdit = (session: ExerciseSessionPoint) => {
+    setEditingSessionId(session.id);
+    setSessionEditDraft(session.sets.map((set) => ({ ...set })));
+  };
+
+  const cancelSessionEdit = () => {
+    setEditingSessionId(null);
+    setSessionEditDraft([]);
+  };
+
+  const applyWorkoutExerciseUpdate = (
+    workouts: Workout[],
+    workoutId: string,
+    exerciseId: string,
+    updater: (exercise: Exercise) => Exercise | null,
+  ) =>
+    workouts
+      .map((workout) => {
+        if (workout.id !== workoutId) return workout;
+        const nextExercises = workout.exercises
+          .map((exercise) => (exercise.id === exerciseId ? updater(exercise) : exercise))
+          .filter((exercise): exercise is Exercise => Boolean(exercise));
+        return { ...workout, exercises: nextExercises };
+      })
+      .filter((workout) => workout.exercises.length > 0);
+
+  const saveSessionEdit = (session: ExerciseSessionPoint) => {
+    const cleaned = sessionEditDraft
+      .map((set) => ({ ...set, weight: Number(set.weight), reps: Number(set.reps) }))
+      .filter((set) => set.weight > 0 && set.reps > 0);
+    if (cleaned.length === 0) return;
+
+    if (session.source.kind === "backfill") {
+      const backfillId = session.source.backfillId;
+      setBackfillSessions((prev) =>
+        prev.map((item) =>
+          item.id === backfillId
+            ? { ...item, sets: cleaned.map((set) => ({ ...set })) }
+            : item,
+        ),
+      );
+      cancelSessionEdit();
+      triggerHaptic();
+      return;
+    }
+
+    const { workoutId, exerciseId } = session.source;
+    setHistory((prev) =>
+      applyWorkoutExerciseUpdate(prev, workoutId, exerciseId, (exercise) => ({
+        ...exercise,
+        sets: exercise.sets.map((set) => {
+          const patch = cleaned.find((item) => item.id === set.id);
+          return patch ? { ...set, weight: patch.weight, reps: patch.reps } : set;
+        }),
+      })),
+    );
+    setCurrentWorkout((prev) => {
+      if (!prev || prev.id !== workoutId) return prev;
+      const nextExercises = prev.exercises.map((exercise) => {
+        if (exercise.id !== exerciseId) return exercise;
+        return {
+          ...exercise,
+          sets: exercise.sets.map((set) => {
+            const patch = cleaned.find((item) => item.id === set.id);
+            return patch ? { ...set, weight: patch.weight, reps: patch.reps } : set;
+          }),
+        };
+      });
+      return { ...prev, exercises: nextExercises };
+    });
+    cancelSessionEdit();
+    triggerHaptic();
+  };
+
+  const deleteSession = (session: ExerciseSessionPoint) => {
+    if (session.source.kind === "backfill") {
+      const backfillId = session.source.backfillId;
+      setBackfillSessions((prev) => prev.filter((item) => item.id !== backfillId));
+      if (editingSessionId === session.id) cancelSessionEdit();
+      triggerHaptic();
+      return;
+    }
+
+    const { workoutId, exerciseId } = session.source;
+    setHistory((prev) =>
+      applyWorkoutExerciseUpdate(prev, workoutId, exerciseId, () => null),
+    );
+    setCurrentWorkout((prev) => {
+      if (!prev || prev.id !== workoutId) return prev;
+      const nextExercises = prev.exercises.filter((exercise) => exercise.id !== exerciseId);
+      return { ...prev, exercises: nextExercises };
+    });
+    if (editingSessionId === session.id) cancelSessionEdit();
+    triggerHaptic();
   };
 
   const filteredCommonExercises = commonExercises.filter((exercise) =>
     exercise.toLowerCase().includes(exerciseSearch.toLowerCase().trim()),
   );
+
+  const loggedDatesForBackfillExercise = useMemo(() => {
+    const normalized = normalizeExerciseName(backfillExerciseName);
+    if (!normalized) return [] as string[];
+    const all = [...workoutBasedSessions, ...backfillSessions];
+    const dates = all
+      .filter((session) => normalizeExerciseName(session.exerciseName) === normalized)
+      .map((session) => getDayKey(session.date));
+    return Array.from(new Set(dates)).sort((a, b) => b.localeCompare(a));
+  }, [backfillExerciseName, backfillSessions, workoutBasedSessions]);
 
   const renderDashboard = () => {
     return (
@@ -1441,6 +1609,9 @@ function App() {
     const hasEnoughData = exercise.totalSets >= 2;
     const sessions = exercise.sessions;
     const latestSession = sessions[sessions.length - 1];
+    const sortedSessions = [...sessions].sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+    );
 
     const allSets = sessions.flatMap((session, sessionIndex) =>
       session.sets.map((set, setIndex) => ({
@@ -1705,6 +1876,106 @@ function App() {
             <div className="rounded-lg border border-border/70 bg-background/70 p-3">
               <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Next Target</p>
               <p className="text-sm font-medium">{exercise.nextTarget}</p>
+            </div>
+
+            <div className="rounded-lg border border-border/70 bg-background/70 p-3">
+              <p className="mb-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+                Session Log
+              </p>
+              <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+                {sortedSessions.map((session) => {
+                  const isEditing = editingSessionId === session.id;
+                  return (
+                    <div key={`session-${session.id}`} className="rounded-md border border-border/60 px-2 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-medium">{session.label}</p>
+                          <p className="text-xs text-muted-foreground">
+                            Top set {session.topSet.weight}x{session.topSet.reps} • Est. 1RM{" "}
+                            {Math.round(session.est1RM)} • Adj {Math.round(session.adjustedScore)}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          {isEditing ? (
+                            <>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="h-7 px-2 text-xs border-emerald-600/30"
+                                onClick={() => saveSessionEdit(session)}
+                              >
+                                Save
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="h-7 px-2 text-xs"
+                                onClick={cancelSessionEdit}
+                              >
+                                Cancel
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="h-7 px-2 text-xs"
+                                onClick={() => beginSessionEdit(session)}
+                              >
+                                Edit
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="h-7 px-2 text-xs text-red-400 hover:text-red-300"
+                                onClick={() => deleteSession(session)}
+                              >
+                                Delete
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {isEditing ? (
+                        <div className="mt-2 space-y-2">
+                          {sessionEditDraft.map((set) => (
+                            <div key={`edit-${session.id}-${set.id}`} className="grid grid-cols-2 gap-2">
+                              <Input
+                                type="number"
+                                min={0}
+                                value={set.weight}
+                                onChange={(event) => {
+                                  const value = Math.max(0, Number(event.target.value) || 0);
+                                  setSessionEditDraft((prev) =>
+                                    prev.map((item) =>
+                                      item.id === set.id ? { ...item, weight: value } : item,
+                                    ),
+                                  );
+                                }}
+                              />
+                              <Input
+                                type="number"
+                                min={0}
+                                value={set.reps}
+                                onChange={(event) => {
+                                  const value = Math.max(0, Number(event.target.value) || 0);
+                                  setSessionEditDraft((prev) =>
+                                    prev.map((item) =>
+                                      item.id === set.id ? { ...item, reps: value } : item,
+                                    ),
+                                  );
+                                }}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -2017,14 +2288,14 @@ function App() {
       <div>
         <h3 className="mb-3 text-lg font-semibold">History</h3>
         <div className="space-y-3">
-          {history.length === 0 ? (
+          {workoutsTabHistory.length === 0 ? (
             <Card className="border-border/70 bg-card/70">
               <CardContent className="py-8 text-center text-muted-foreground">
                 No past workouts yet.
               </CardContent>
             </Card>
           ) : (
-            history.map((workout) => (
+            workoutsTabHistory.map((workout) => (
               <Card key={workout.id} className="gradient-card">
                 <CardHeader className="pb-2">
                   <div className="flex items-start justify-between gap-2">
@@ -2587,6 +2858,27 @@ function App() {
                 value={backfillDate}
                 onChange={(event) => setBackfillDate(event.target.value)}
               />
+              {loggedDatesForBackfillExercise.length > 0 ? (
+                <div className="pt-1">
+                  <p className="mb-1 text-[11px] text-muted-foreground">
+                    Already logged on:
+                  </p>
+                  <div className="flex max-w-full gap-1 overflow-x-auto pb-1">
+                    {loggedDatesForBackfillExercise.slice(0, 24).map((date) => (
+                      <span
+                        key={`logged-date-${date}`}
+                        className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-300"
+                      >
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
+                        {new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                        })}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="space-y-1">
