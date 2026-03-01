@@ -11,11 +11,14 @@ export interface Exercise {
   sets: Set[];
 }
 
+export type SessionContext = "great" | "normal" | "fatigued" | "rushed";
+
 export interface Workout {
   id: string;
   date: string; // ISO date string
   name: string; // ← required name field
   exercises: Exercise[];
+  contextTag?: SessionContext;
 }
 
 export type WorkoutHistory = Workout[];

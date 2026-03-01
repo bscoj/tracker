@@ -83,3 +83,24 @@
     min-height: 100vh;
   }
 }
+
+@layer utilities {
+  .safe-area-nav {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+
+  .gradient-card {
+    @apply border border-border/70 bg-gradient-to-br from-card to-emerald-950/10 transition-all duration-200;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
