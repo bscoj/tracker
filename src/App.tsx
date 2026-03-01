@@ -1740,7 +1740,6 @@ function App() {
         ) : (
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             {trackedExercises.map((exercise) => {
-              const canViewTrends = exercise.totalSets >= 2;
               const isTrackedOnDashboard = trackedDashboardExercises.includes(exercise.key);
               return (
                 <div
@@ -1751,7 +1750,6 @@ function App() {
                     <button
                       type="button"
                       className="min-w-0 flex-1 text-left"
-                      disabled={!canViewTrends}
                       onClick={() => openExerciseDetail(exercise.key)}
                     >
                       <p className="text-lg font-semibold leading-tight">{exercise.name}</p>
@@ -1784,7 +1782,7 @@ function App() {
                     </div>
                   </div>
 
-                  {!canViewTrends && (
+                  {exercise.totalSets < 2 && (
                     <p className="mt-2 text-xs text-muted-foreground">
                       Add at least 2 sets to unlock trend charts.
                     </p>
