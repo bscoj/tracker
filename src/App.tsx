@@ -61,7 +61,7 @@ type Units = "lbs" | "kg";
 type Trend = "up" | "flat" | "down";
 type ExerciseState = "normal" | "stalled" | "breakthrough";
 type Confidence = "low" | "high";
-type VizMode = "one_rm" | "set_map";
+type VizMode = "one_rm" | "set_map" | "data";
 type DashboardMetricId =
   | "weekly_consistency"
   | "key_lift_progress"
@@ -94,6 +94,7 @@ type ExerciseSessionPoint = {
   topSet: { weight: number; reps: number };
   est1RM: number;
   adjustedScore: number;
+  volume: number;
   contextTag?: SessionContext;
   source: SessionSource;
 };
@@ -611,6 +612,7 @@ function App() {
       const adjustedScore =
         cleanedSets.reduce((sum, set) => sum + estimateSessionScore(set.weight, set.reps), 0) /
         cleanedSets.length;
+      const volume = cleanedSets.reduce((sum, set) => sum + set.weight * set.reps, 0);
 
       const point: ExerciseSessionPoint = {
         id: session.id,
@@ -620,6 +622,7 @@ function App() {
         topSet: { weight: topSet.weight, reps: topSet.reps },
         est1RM: estimate1RM(topSet.weight, topSet.reps),
         adjustedScore,
+        volume,
         contextTag: session.contextTag,
         source: session.source,
       };
@@ -1668,7 +1671,9 @@ function App() {
 
     const chartInfo = {
       one_rm: "Estimated 1RM uses Brzycki: weight × (36 / (37 - reps)).",
-      set_map: "Bubble Y-axis is weight, bubble size is reps, and color intensity is rep-adjusted load.",
+      set_map:
+        "Bubble Y-axis is weight, bubble size is reps, and the dotted line is average adjusted score over time.",
+      data: "Edit individual logged sessions inline. Changes update trends and dashboard metrics.",
     } as const;
 
     return (
@@ -1717,154 +1722,270 @@ function App() {
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            {!hasEnoughData ? (
-              <div className="rounded-lg border border-dashed border-border/70 p-5 text-sm text-muted-foreground">
-                Add at least 2 total sets for this exercise to unlock trend visualizations.
+            <div className="grid grid-cols-3 gap-2">
+              <Button
+                variant={exerciseVizMode === "one_rm" ? "default" : "outline"}
+                className="h-10"
+                onClick={() => changeExerciseVizMode("one_rm")}
+              >
+                1RM Trend
+              </Button>
+              <Button
+                variant={exerciseVizMode === "set_map" ? "default" : "outline"}
+                className="h-10"
+                onClick={() => changeExerciseVizMode("set_map")}
+              >
+                Weight x Reps
+              </Button>
+              <Button
+                variant={exerciseVizMode === "data" ? "default" : "outline"}
+                className="h-10"
+                onClick={() => changeExerciseVizMode("data")}
+              >
+                Data
+              </Button>
+            </div>
+
+            <div className="rounded-lg border border-border/70 bg-background/70 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-sm font-medium">
+                  {exerciseVizMode === "one_rm"
+                    ? "Estimated 1RM"
+                    : exerciseVizMode === "set_map"
+                      ? "Weight x Reps Map"
+                      : "Exercise Data"}
+                </p>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground">
+                      <Info className="h-4 w-4" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-72 text-sm text-muted-foreground" align="end">
+                    {chartInfo[exerciseVizMode]}
+                  </PopoverContent>
+                </Popover>
               </div>
-            ) : (
-              <>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    variant={exerciseVizMode === "one_rm" ? "default" : "outline"}
-                    className="h-10"
-                    onClick={() => changeExerciseVizMode("one_rm")}
-                  >
-                    1RM Trend
-                  </Button>
-                  <Button
-                    variant={exerciseVizMode === "set_map" ? "default" : "outline"}
-                    className="h-10"
-                    onClick={() => changeExerciseVizMode("set_map")}
-                  >
-                    Weight x Reps
-                  </Button>
-                </div>
 
-                <div className="rounded-lg border border-border/70 bg-background/70 p-3">
-                  <div className="mb-2 flex items-center justify-between">
-                    <p className="text-sm font-medium">
-                      {exerciseVizMode === "one_rm"
-                        ? "Estimated 1RM"
-                        : "Weight x Reps Map"}
-                    </p>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground">
-                          <Info className="h-4 w-4" />
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-72 text-sm text-muted-foreground" align="end">
-                        {chartInfo[exerciseVizMode]}
-                      </PopoverContent>
-                    </Popover>
+              {exerciseVizMode === "one_rm" ? (
+                !hasEnoughData ? (
+                  <div className="rounded-lg border border-dashed border-border/70 p-5 text-sm text-muted-foreground">
+                    Add at least 2 total sets for this exercise to unlock trend visualizations.
                   </div>
-
-                  {exerciseVizMode === "one_rm" ? (
-                    <div className="space-y-2">
-                      <div className="grid grid-cols-[36px_1fr] gap-2">
-                        <div className="flex h-36 flex-col justify-between text-[11px] text-muted-foreground">
-                          {rmScale.ticks.map((tick, idx) => (
-                            <span key={`rm-${idx}`}>{tick}</span>
-                          ))}
-                        </div>
-                        <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-36 w-full">
-                          {[26, 50, 74].map((line) => (
-                            <line
-                              key={line}
-                              x1="10"
-                              y1={line}
-                              x2="98"
-                              y2={line}
-                              stroke="rgba(148,163,184,0.25)"
-                              strokeWidth="0.5"
-                            />
-                          ))}
-                          <polyline
-                            points={sessionLinePoints}
-                            fill="none"
-                            stroke="#34d399"
-                            strokeWidth="3"
-                            strokeLinejoin="round"
-                            strokeLinecap="round"
+                ) : (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-[36px_1fr] gap-2">
+                      <div className="flex h-36 flex-col justify-between text-[11px] text-muted-foreground">
+                        {rmScale.ticks.map((tick, idx) => (
+                          <span key={`rm-${idx}`}>{tick}</span>
+                        ))}
+                      </div>
+                      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-36 w-full">
+                        {[26, 50, 74].map((line) => (
+                          <line
+                            key={line}
+                            x1="10"
+                            y1={line}
+                            x2="98"
+                            y2={line}
+                            stroke="rgba(148,163,184,0.25)"
+                            strokeWidth="0.5"
                           />
-                          {sessions.map((session, index) => (
+                        ))}
+                        <polyline
+                          points={sessionLinePoints}
+                          fill="none"
+                          stroke="#34d399"
+                          strokeWidth="3"
+                          strokeLinejoin="round"
+                          strokeLinecap="round"
+                        />
+                        {sessions.map((session, index) => (
+                          <circle
+                            key={session.id}
+                            cx={getX(index, sessions.length)}
+                            cy={rmScale.toY(session.est1RM)}
+                            r="2.2"
+                            fill="#a7f3d0"
+                          />
+                        ))}
+                      </svg>
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>{sessions[0]?.label}</span>
+                      <span>{sessions[sessions.length - 1]?.label}</span>
+                    </div>
+                  </div>
+                )
+              ) : exerciseVizMode === "set_map" ? (
+                !hasEnoughData ? (
+                  <div className="rounded-lg border border-dashed border-border/70 p-5 text-sm text-muted-foreground">
+                    Add at least 2 total sets for this exercise to unlock trend visualizations.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-[36px_1fr] gap-2">
+                      <div className="flex h-36 flex-col justify-between text-[11px] text-muted-foreground">
+                        {weightScale.ticks.map((tick, idx) => (
+                          <span key={`set-${idx}`}>{tick}</span>
+                        ))}
+                      </div>
+                      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-36 w-full">
+                        {[26, 50, 74].map((line) => (
+                          <line
+                            key={line}
+                            x1="10"
+                            y1={line}
+                            x2="98"
+                            y2={line}
+                            stroke="rgba(148,163,184,0.2)"
+                            strokeWidth="0.5"
+                          />
+                        ))}
+                        {allSets.map((set) => {
+                          const xBase = getX(set.sessionIndex, sessions.length);
+                          const jitter = ((set.setIndex % 5) - 2) * 1.3;
+                          const x = Math.max(11, Math.min(98, xBase + jitter));
+                          const y = weightScale.toY(set.weight);
+                          const radius = Math.min(6.5, 2.6 + set.reps * 0.22);
+                          const heat = (set.score - minScore) / scoreSpan;
+                          const fill = `rgba(${Math.round(45 + heat * 90)}, ${Math.round(
+                            198 - heat * 24,
+                          )}, ${Math.round(238 - heat * 95)}, 0.72)`;
+                          return (
                             <circle
-                              key={session.id}
-                              cx={getX(index, sessions.length)}
-                              cy={rmScale.toY(session.est1RM)}
-                              r="2.2"
-                              fill="#a7f3d0"
+                              key={set.id}
+                              cx={x}
+                              cy={y}
+                              r={radius}
+                              fill={fill}
+                              stroke="rgba(255,255,255,0.24)"
+                              strokeWidth="0.4"
                             />
-                          ))}
-                        </svg>
-                      </div>
-                      <div className="flex items-center justify-between text-xs text-muted-foreground">
-                        <span>{sessions[0]?.label}</span>
-                        <span>{sessions[sessions.length - 1]?.label}</span>
-                      </div>
+                          );
+                        })}
+                        <polyline
+                          points={adjustedLinePoints}
+                          fill="none"
+                          stroke="#22d3ee"
+                          strokeWidth="1.3"
+                          strokeDasharray="3 2"
+                          strokeLinejoin="round"
+                          strokeLinecap="round"
+                        />
+                      </svg>
                     </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <div className="grid grid-cols-[36px_1fr] gap-2">
-                        <div className="flex h-36 flex-col justify-between text-[11px] text-muted-foreground">
-                          {weightScale.ticks.map((tick, idx) => (
-                            <span key={`set-${idx}`}>{tick}</span>
-                          ))}
-                        </div>
-                        <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-36 w-full">
-                          {[26, 50, 74].map((line) => (
-                            <line
-                              key={line}
-                              x1="10"
-                              y1={line}
-                              x2="98"
-                              y2={line}
-                              stroke="rgba(148,163,184,0.2)"
-                              strokeWidth="0.5"
-                            />
-                          ))}
-                          {allSets.map((set) => {
-                            const xBase = getX(set.sessionIndex, sessions.length);
-                            const jitter = ((set.setIndex % 5) - 2) * 1.3;
-                            const x = Math.max(11, Math.min(98, xBase + jitter));
-                            const y = weightScale.toY(set.weight);
-                            const radius = Math.min(6.5, 2.6 + set.reps * 0.22);
-                            const heat = (set.score - minScore) / scoreSpan;
-                            const fill = `rgba(${Math.round(45 + heat * 90)}, ${Math.round(
-                              198 - heat * 24,
-                            )}, ${Math.round(238 - heat * 95)}, 0.72)`;
-                            return (
-                              <circle
-                                key={set.id}
-                                cx={x}
-                                cy={y}
-                                r={radius}
-                                fill={fill}
-                                stroke="rgba(255,255,255,0.24)"
-                                strokeWidth="0.4"
-                              />
-                            );
-                          })}
-                          <polyline
-                            points={adjustedLinePoints}
-                            fill="none"
-                            stroke="#22d3ee"
-                            strokeWidth="1.3"
-                            strokeDasharray="3 2"
-                            strokeLinejoin="round"
-                            strokeLinecap="round"
-                          />
-                        </svg>
-                      </div>
-                      <div className="flex items-center justify-between text-xs text-muted-foreground">
-                        <span>{sessions[0]?.label}</span>
-                        <span>{sessions[sessions.length - 1]?.label}</span>
-                      </div>
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>{sessions[0]?.label}</span>
+                      <span>{sessions[sessions.length - 1]?.label}</span>
                     </div>
-                  )}
+                  </div>
+                )
+              ) : sortedSessions.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border/70 p-5 text-sm text-muted-foreground">
+                  No sessions logged yet.
                 </div>
-              </>
-            )}
+              ) : (
+                <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                  <div className="grid grid-cols-[1.1fr_1fr_1fr_1fr_auto] items-center gap-2 px-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                    <span>Date</span>
+                    <span>Top Set</span>
+                    <span>Est. 1RM</span>
+                    <span>Volume</span>
+                    <span className="text-right">Actions</span>
+                  </div>
+                  {sortedSessions.map((session) => {
+                    const isEditing = editingSessionId === session.id;
+                    return (
+                      <div key={`session-${session.id}`} className="rounded-md border border-border/60 px-2 py-2">
+                        <div className="grid grid-cols-[1.1fr_1fr_1fr_1fr_auto] items-center gap-2">
+                          <span className="text-sm font-medium">{session.label}</span>
+                          <span className="text-sm">{session.topSet.weight}x{session.topSet.reps}</span>
+                          <span className="text-sm">{Math.round(session.est1RM)}</span>
+                          <span className="text-sm">{Math.round(session.volume)}</span>
+                          <div className="flex items-center justify-end gap-1">
+                            {isEditing ? (
+                              <>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="h-7 px-2 text-xs border-emerald-600/30"
+                                  onClick={() => saveSessionEdit(session)}
+                                >
+                                  Save
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  className="h-7 px-2 text-xs"
+                                  onClick={cancelSessionEdit}
+                                >
+                                  Cancel
+                                </Button>
+                              </>
+                            ) : (
+                              <>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => beginSessionEdit(session)}
+                                >
+                                  Edit
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  className="h-7 px-2 text-xs text-red-400 hover:text-red-300"
+                                  onClick={() => deleteSession(session)}
+                                >
+                                  Delete
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {isEditing ? (
+                          <div className="mt-2 space-y-2">
+                            {sessionEditDraft.map((set) => (
+                              <div key={`edit-${session.id}-${set.id}`} className="grid grid-cols-2 gap-2">
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  value={set.weight}
+                                  onChange={(event) => {
+                                    const value = Math.max(0, Number(event.target.value) || 0);
+                                    setSessionEditDraft((prev) =>
+                                      prev.map((item) =>
+                                        item.id === set.id ? { ...item, weight: value } : item,
+                                      ),
+                                    );
+                                  }}
+                                />
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  value={set.reps}
+                                  onChange={(event) => {
+                                    const value = Math.max(0, Number(event.target.value) || 0);
+                                    setSessionEditDraft((prev) =>
+                                      prev.map((item) =>
+                                        item.id === set.id ? { ...item, reps: value } : item,
+                                      ),
+                                    );
+                                  }}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
             {latestSession ? (
               <div className="grid grid-cols-4 gap-2 rounded-lg border border-border/70 bg-background/70 p-3">
@@ -1893,105 +2014,6 @@ function App() {
               <p className="text-sm font-medium">{exercise.nextTarget}</p>
             </div>
 
-            <div className="rounded-lg border border-border/70 bg-background/70 p-3">
-              <p className="mb-2 text-[11px] uppercase tracking-wide text-muted-foreground">
-                Session Log
-              </p>
-              <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
-                {sortedSessions.map((session) => {
-                  const isEditing = editingSessionId === session.id;
-                  return (
-                    <div key={`session-${session.id}`} className="rounded-md border border-border/60 px-2 py-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <div>
-                          <p className="text-sm font-medium">{session.label}</p>
-                          <p className="text-xs text-muted-foreground">
-                            Top set {session.topSet.weight}x{session.topSet.reps} • Est. 1RM{" "}
-                            {Math.round(session.est1RM)} • Adj {Math.round(session.adjustedScore)}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          {isEditing ? (
-                            <>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                className="h-7 px-2 text-xs border-emerald-600/30"
-                                onClick={() => saveSessionEdit(session)}
-                              >
-                                Save
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                className="h-7 px-2 text-xs"
-                                onClick={cancelSessionEdit}
-                              >
-                                Cancel
-                              </Button>
-                            </>
-                          ) : (
-                            <>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                className="h-7 px-2 text-xs"
-                                onClick={() => beginSessionEdit(session)}
-                              >
-                                Edit
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                className="h-7 px-2 text-xs text-red-400 hover:text-red-300"
-                                onClick={() => deleteSession(session)}
-                              >
-                                Delete
-                              </Button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-
-                      {isEditing ? (
-                        <div className="mt-2 space-y-2">
-                          {sessionEditDraft.map((set) => (
-                            <div key={`edit-${session.id}-${set.id}`} className="grid grid-cols-2 gap-2">
-                              <Input
-                                type="number"
-                                min={0}
-                                value={set.weight}
-                                onChange={(event) => {
-                                  const value = Math.max(0, Number(event.target.value) || 0);
-                                  setSessionEditDraft((prev) =>
-                                    prev.map((item) =>
-                                      item.id === set.id ? { ...item, weight: value } : item,
-                                    ),
-                                  );
-                                }}
-                              />
-                              <Input
-                                type="number"
-                                min={0}
-                                value={set.reps}
-                                onChange={(event) => {
-                                  const value = Math.max(0, Number(event.target.value) || 0);
-                                  setSessionEditDraft((prev) =>
-                                    prev.map((item) =>
-                                      item.id === set.id ? { ...item, reps: value } : item,
-                                    ),
-                                  );
-                                }}
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
           </CardContent>
         </Card>
       </div>
