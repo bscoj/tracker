@@ -54,11 +54,15 @@ const STORAGE_KEY_BACKFILL = "gradienttrack_backfill_sessions";
 const STORAGE_KEY_DASH_ORDER = "gradienttrack_dashboard_order";
 const STORAGE_KEY_DASH_TRACKED = "gradienttrack_dashboard_tracked_exercises";
 const STORAGE_KEY_DASH_GOALS = "gradienttrack_dashboard_goals";
+const STORAGE_KEY_DASH_GOAL_DIRECTION = "gradienttrack_dashboard_goal_direction";
+const STORAGE_KEY_DASH_PREFS_UPDATED = "gradienttrack_dashboard_prefs_updated_at";
 const STORAGE_KEY_CLOUD_OPT_IN = "gradienttrack_cloud_opt_in";
+const STORAGE_KEY_BODYWEIGHT_LOG = "gradienttrack_bodyweight_log";
 
 type Tab = "dashboard" | "exercises" | "workouts" | "profile";
 type Units = "lbs" | "kg";
 type Trend = "up" | "flat" | "down";
+type GoalDirection = "increase" | "decrease";
 type ExerciseState = "normal" | "stalled" | "breakthrough";
 type Confidence = "low" | "high";
 type VizMode = "one_rm" | "set_map" | "data";
@@ -121,6 +125,12 @@ type DashboardMetric = {
   goalUnit: string;
 };
 
+type BodyweightEntry = {
+  id: string;
+  date: string;
+  value: number;
+};
+
 type AppSnapshot = {
   currentWorkout: Workout | null;
   history: Workout[];
@@ -130,6 +140,9 @@ type AppSnapshot = {
   dashboardOrder: DashboardMetricId[];
   trackedDashboardExercises: string[];
   dashboardGoals: Record<string, number>;
+  dashboardGoalDirection: Record<string, GoalDirection>;
+  dashboardPrefsUpdatedAt: number;
+  bodyweightLog: BodyweightEntry[];
   joinDate: string;
 };
 
@@ -186,10 +199,8 @@ function getTrend(values: number[]) {
   const recent = values.slice(-5);
   const baseline = recent[0];
   const latest = recent[recent.length - 1];
-  if (baseline <= 0) return "flat" as Trend;
-  const pct = ((latest - baseline) / baseline) * 100;
-  if (pct >= 2) return "up" as Trend;
-  if (pct <= -2) return "down" as Trend;
+  if (latest > baseline) return "up" as Trend;
+  if (latest < baseline) return "down" as Trend;
   return "flat" as Trend;
 }
 
@@ -342,10 +353,33 @@ function App() {
     if (!saved) return {};
     return JSON.parse(saved) as Record<string, number>;
   });
+  const [dashboardGoalDirection, setDashboardGoalDirection] = useState<Record<string, GoalDirection>>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_DASH_GOAL_DIRECTION);
+    if (!saved) return {};
+    return JSON.parse(saved) as Record<string, GoalDirection>;
+  });
+  const [dashboardPrefsUpdatedAt, setDashboardPrefsUpdatedAt] = useState<number>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_DASH_PREFS_UPDATED);
+    if (!saved) return 0;
+    const parsed = Number(saved);
+    return Number.isFinite(parsed) ? parsed : 0;
+  });
+  const [bodyweightLog, setBodyweightLog] = useState<BodyweightEntry[]>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_BODYWEIGHT_LOG);
+    if (!saved) return [];
+    return JSON.parse(saved) as BodyweightEntry[];
+  });
   const [isDashboardManageOpen, setIsDashboardManageOpen] = useState(false);
-  const [goalEditor, setGoalEditor] = useState<{ key: string; label: string; value: string } | null>(
-    null,
-  );
+  const [isBodyweightDialogOpen, setIsBodyweightDialogOpen] = useState(false);
+  const [bodyweightDate, setBodyweightDate] = useState(toDateInputValue());
+  const [bodyweightValue, setBodyweightValue] = useState<number | "">("");
+  const [goalEditor, setGoalEditor] = useState<{
+    key: string;
+    label: string;
+    value: string;
+    direction: GoalDirection;
+    showDirection: boolean;
+  } | null>(null);
 
   const [expandedExerciseId, setExpandedExerciseId] = useState<string | null>(null);
   const [workoutName, setWorkoutName] = useState("");
@@ -426,6 +460,18 @@ function App() {
   }, [dashboardGoals]);
 
   useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_DASH_GOAL_DIRECTION, JSON.stringify(dashboardGoalDirection));
+  }, [dashboardGoalDirection]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_DASH_PREFS_UPDATED, `${dashboardPrefsUpdatedAt}`);
+  }, [dashboardPrefsUpdatedAt]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_BODYWEIGHT_LOG, JSON.stringify(bodyweightLog));
+  }, [bodyweightLog]);
+
+  useEffect(() => {
     localStorage.setItem(STORAGE_KEY_CLOUD_OPT_IN, cloudOptIn ? "true" : "false");
     if (!cloudOptIn) {
       setDidInitialCloudSync(false);
@@ -464,6 +510,9 @@ function App() {
     dashboardOrder,
     trackedDashboardExercises,
     dashboardGoals,
+    dashboardGoalDirection,
+    dashboardPrefsUpdatedAt,
+    bodyweightLog,
     joinDate,
   });
 
@@ -476,6 +525,9 @@ function App() {
     setDashboardOrder(snapshot.dashboardOrder);
     setTrackedDashboardExercises(snapshot.trackedDashboardExercises);
     setDashboardGoals(snapshot.dashboardGoals);
+    setDashboardGoalDirection(snapshot.dashboardGoalDirection ?? {});
+    setDashboardPrefsUpdatedAt(snapshot.dashboardPrefsUpdatedAt ?? 0);
+    setBodyweightLog(snapshot.bodyweightLog ?? []);
   };
 
   const normalizeDashboardOrder = (order: DashboardMetricId[]) => {
@@ -517,9 +569,16 @@ function App() {
       }
     });
 
-    const mergedTracked = [...cloud.trackedDashboardExercises];
-    local.trackedDashboardExercises.forEach((key) => {
-      if (!mergedTracked.includes(key)) mergedTracked.push(key);
+    const mergedBodyweightMap = new Map<string, BodyweightEntry>();
+    [...cloud.bodyweightLog, ...local.bodyweightLog].forEach((entry) => {
+      const existing = mergedBodyweightMap.get(entry.id);
+      if (!existing) {
+        mergedBodyweightMap.set(entry.id, entry);
+        return;
+      }
+      if (new Date(entry.date).getTime() > new Date(existing.date).getTime()) {
+        mergedBodyweightMap.set(entry.id, entry);
+      }
     });
 
     const localCurrentTime = local.currentWorkout ? new Date(local.currentWorkout.date).getTime() : 0;
@@ -529,6 +588,20 @@ function App() {
 
     const localJoin = new Date(local.joinDate).getTime();
     const cloudJoin = new Date(cloud.joinDate).getTime();
+    const preferLocalPrefs =
+      (local.dashboardPrefsUpdatedAt ?? 0) >= (cloud.dashboardPrefsUpdatedAt ?? 0);
+    const mergedDashboardOrder = preferLocalPrefs ? local.dashboardOrder : cloud.dashboardOrder;
+    const mergedTracked = preferLocalPrefs
+      ? local.trackedDashboardExercises
+      : cloud.trackedDashboardExercises;
+    const mergedGoals = preferLocalPrefs ? local.dashboardGoals : cloud.dashboardGoals;
+    const mergedGoalDirection = preferLocalPrefs
+      ? local.dashboardGoalDirection
+      : cloud.dashboardGoalDirection;
+    const mergedPrefsUpdatedAt = Math.max(
+      local.dashboardPrefsUpdatedAt ?? 0,
+      cloud.dashboardPrefsUpdatedAt ?? 0,
+    );
 
     return {
       currentWorkout: currentWorkoutMerged,
@@ -543,10 +616,15 @@ function App() {
         (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
       ),
       dashboardOrder: normalizeDashboardOrder(
-        Array.from(new Set([...cloud.dashboardOrder, ...local.dashboardOrder])) as DashboardMetricId[],
+        mergedDashboardOrder,
       ),
       trackedDashboardExercises: mergedTracked,
-      dashboardGoals: { ...cloud.dashboardGoals, ...local.dashboardGoals },
+      dashboardGoals: mergedGoals,
+      dashboardGoalDirection: mergedGoalDirection,
+      dashboardPrefsUpdatedAt: mergedPrefsUpdatedAt,
+      bodyweightLog: Array.from(mergedBodyweightMap.values()).sort(
+        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+      ),
       joinDate: localJoin < cloudJoin ? local.joinDate : cloud.joinDate,
     };
   };
@@ -787,6 +865,32 @@ function App() {
       ),
     ).length;
 
+    const sortedBodyweight = [...bodyweightLog].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+    );
+    const latestBodyweight = sortedBodyweight[sortedBodyweight.length - 1];
+    const priorBodyweight = sortedBodyweight[sortedBodyweight.length - 2];
+    const bodyweightGoal = dashboardGoals.bodyweight_trend;
+    const bodyweightDirection = dashboardGoalDirection.bodyweight_trend ?? "decrease";
+    let bodyweightTrend: Trend = "flat";
+    if (priorBodyweight && latestBodyweight) {
+      if (Number.isFinite(bodyweightGoal) && bodyweightGoal > 0) {
+        const previousDistance = Math.abs(priorBodyweight.value - bodyweightGoal);
+        const latestDistance = Math.abs(latestBodyweight.value - bodyweightGoal);
+        if (latestDistance < previousDistance) bodyweightTrend = "up";
+        if (latestDistance > previousDistance) bodyweightTrend = "down";
+      } else {
+        const delta = latestBodyweight.value - priorBodyweight.value;
+        if (bodyweightDirection === "decrease") {
+          if (delta < 0) bodyweightTrend = "up";
+          if (delta > 0) bodyweightTrend = "down";
+        } else {
+          if (delta > 0) bodyweightTrend = "up";
+          if (delta < 0) bodyweightTrend = "down";
+        }
+      }
+    }
+
     return [
       {
         id: "weekly_consistency",
@@ -805,8 +909,8 @@ function App() {
       {
         id: "bodyweight_trend",
         title: "Bodyweight Trend",
-        value: units === "lbs" ? "185.0 lbs" : "83.9 kg",
-        trend: "flat",
+        value: latestBodyweight ? `${latestBodyweight.value.toFixed(1)} ${units}` : "No data",
+        trend: bodyweightTrend,
         goalUnit: units,
       },
       {
@@ -817,7 +921,7 @@ function App() {
         goalUnit: "patterns",
       },
     ];
-  }, [history, trackedExercises, units]);
+  }, [bodyweightLog, dashboardGoalDirection, dashboardGoals, history, trackedExercises, units]);
 
   const orderedDashboardMetrics = useMemo(() => {
     const metricMap = new Map(dashboardMetrics.map((metric) => [metric.id, metric]));
@@ -882,6 +986,10 @@ function App() {
     [trackedByKey, trackedDashboardExercises],
   );
 
+  const markDashboardPrefsEdited = () => {
+    setDashboardPrefsUpdatedAt(Date.now());
+  };
+
   const moveMetricByDirection = (metricId: DashboardMetricId, direction: "up" | "down") => {
     setDashboardOrder((prev) => {
       const fromIndex = prev.indexOf(metricId);
@@ -889,6 +997,7 @@ function App() {
       const toIndex = direction === "up" ? fromIndex - 1 : fromIndex + 1;
       if (toIndex < 0 || toIndex >= prev.length) return prev;
       triggerHaptic();
+      markDashboardPrefsEdited();
       return moveItem(prev, fromIndex, toIndex);
     });
   };
@@ -896,6 +1005,7 @@ function App() {
   const toggleSystemMetric = (metricId: DashboardMetricId) => {
     setDashboardOrder((prev) => {
       triggerHaptic();
+      markDashboardPrefsEdited();
       if (prev.includes(metricId)) return prev.filter((id) => id !== metricId);
       return [...prev, metricId];
     });
@@ -904,16 +1014,20 @@ function App() {
   const toggleTrackedExercise = (exerciseKey: string) => {
     setTrackedDashboardExercises((prev) => {
       triggerHaptic();
+      markDashboardPrefsEdited();
       if (prev.includes(exerciseKey)) return prev.filter((key) => key !== exerciseKey);
       return [...prev, exerciseKey];
     });
   };
 
   const openGoalEditor = (key: string, label: string) => {
+    const showDirection = key === "bodyweight_trend";
     setGoalEditor({
       key,
       label,
       value: dashboardGoals[key] ? `${dashboardGoals[key]}` : "",
+      direction: dashboardGoalDirection[key] ?? (showDirection ? "decrease" : "increase"),
+      showDirection,
     });
   };
 
@@ -926,11 +1040,21 @@ function App() {
         delete next[goalEditor.key];
         return next;
       });
+      setDashboardGoalDirection((prev) => {
+        const next = { ...prev };
+        delete next[goalEditor.key];
+        return next;
+      });
+      markDashboardPrefsEdited();
       triggerHaptic();
       setGoalEditor(null);
       return;
     }
+    markDashboardPrefsEdited();
     setDashboardGoals((prev) => ({ ...prev, [goalEditor.key]: parsed }));
+    if (goalEditor.showDirection) {
+      setDashboardGoalDirection((prev) => ({ ...prev, [goalEditor.key]: goalEditor.direction }));
+    }
     triggerHaptic();
     setGoalEditor(null);
   };
@@ -995,6 +1119,30 @@ function App() {
     setIsBackfillDialogOpen(true);
   };
 
+  const openBodyweightDialog = () => {
+    const latest = [...bodyweightLog].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+    )[bodyweightLog.length - 1];
+    setBodyweightDate(toDateInputValue());
+    setBodyweightValue(latest?.value ?? "");
+    setIsBodyweightDialogOpen(true);
+  };
+
+  const saveBodyweightEntry = () => {
+    const value = Number(bodyweightValue);
+    if (!Number.isFinite(value) || value <= 0) return;
+    const dateIso = bodyweightDate
+      ? new Date(`${bodyweightDate}T12:00:00`).toISOString()
+      : new Date().toISOString();
+    setBodyweightLog((prev) =>
+      [...prev, { id: uuidv4(), date: dateIso, value }].sort(
+        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+      ),
+    );
+    setIsBodyweightDialogOpen(false);
+    triggerHaptic();
+  };
+
   const openExerciseDetail = (exerciseKey: string) => {
     setSelectedExerciseKey(exerciseKey);
   };
@@ -1006,13 +1154,46 @@ function App() {
   const loadCloudSnapshot = async (userId: string) => {
     const { data, error } = await supabase
       .from("user_state")
-      .select("payload")
+      .select("payload,updated_at")
       .eq("user_id", userId)
       .maybeSingle();
 
     if (error) throw error;
     if (!data?.payload) return null;
-    return data.payload as AppSnapshot;
+    const payload = data.payload as Partial<AppSnapshot>;
+    return {
+      currentWorkout: payload.currentWorkout ?? null,
+      history: Array.isArray(payload.history) ? (payload.history as Workout[]) : [],
+      units: payload.units === "kg" ? "kg" : "lbs",
+      exerciseCatalog: Array.isArray(payload.exerciseCatalog) ? payload.exerciseCatalog : [],
+      backfillSessions: Array.isArray(payload.backfillSessions) ? payload.backfillSessions : [],
+      dashboardOrder: normalizeDashboardOrder(
+        Array.isArray(payload.dashboardOrder)
+          ? (payload.dashboardOrder as DashboardMetricId[])
+          : defaultDashboardOrder,
+      ),
+      trackedDashboardExercises: Array.isArray(payload.trackedDashboardExercises)
+        ? payload.trackedDashboardExercises
+        : [],
+      dashboardGoals:
+        payload.dashboardGoals && typeof payload.dashboardGoals === "object"
+          ? (payload.dashboardGoals as Record<string, number>)
+          : {},
+      dashboardGoalDirection:
+        payload.dashboardGoalDirection && typeof payload.dashboardGoalDirection === "object"
+          ? (payload.dashboardGoalDirection as Record<string, GoalDirection>)
+          : {},
+      dashboardPrefsUpdatedAt:
+        typeof payload.dashboardPrefsUpdatedAt === "number"
+          ? payload.dashboardPrefsUpdatedAt
+          : data.updated_at
+            ? new Date(data.updated_at).getTime()
+            : 0,
+      bodyweightLog: Array.isArray(payload.bodyweightLog)
+        ? (payload.bodyweightLog as BodyweightEntry[])
+        : [],
+      joinDate: typeof payload.joinDate === "string" ? payload.joinDate : new Date().toISOString(),
+    } satisfies AppSnapshot;
   };
 
   const saveCloudSnapshot = async (userId: string, snapshot: AppSnapshot) => {
@@ -1161,13 +1342,16 @@ function App() {
     authUser,
     cloudOptIn,
     currentWorkout,
+    dashboardGoalDirection,
     dashboardGoals,
     dashboardOrder,
+    dashboardPrefsUpdatedAt,
     didInitialCloudSync,
     exerciseCatalog,
     history,
     isSyncingCloud,
     backfillSessions,
+    bodyweightLog,
     trackedDashboardExercises,
     units,
   ]);
@@ -1473,7 +1657,7 @@ function App() {
 
   const renderDashboard = () => {
     return (
-      <div className="flex h-full flex-col gap-4">
+      <div className="flex h-full flex-col gap-3">
         <div className="flex items-center justify-between">
           <h1 className="text-4xl font-bold bg-gradient-to-r from-emerald-300 via-emerald-400 to-cyan-400 bg-clip-text text-transparent">
             GradientTrack
@@ -1493,7 +1677,7 @@ function App() {
               {orderedDashboardMetrics.map((metric, index) => (
                 <div
                   key={metric.id}
-                  className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-border/60 bg-background/65 px-4 py-4"
+                  className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-border/60 bg-background/65 px-3 py-3"
                 >
                   <div>{renderTrendIcon(metric.trend)}</div>
 
@@ -1501,15 +1685,30 @@ function App() {
                     <p className="truncate text-xs uppercase tracking-wide text-muted-foreground">
                       {metric.title}
                     </p>
-                    <p className="truncate text-lg font-semibold">{metric.value}</p>
+                    <p className="truncate text-2xl font-bold leading-none tabular-nums">{metric.value}</p>
                     {dashboardGoals[metric.id] ? (
                       <p className="text-xs text-cyan-300/90">
                         Goal: {dashboardGoals[metric.id]} {metric.goalUnit}
+                        {metric.id === "bodyweight_trend"
+                          ? ` (${dashboardGoalDirection[metric.id] ?? "decrease"})`
+                          : ""}
                       </p>
                     ) : null}
                   </div>
 
                   <div className="flex flex-col gap-1">
+                    {metric.id === "bodyweight_trend" ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 rounded-md text-cyan-300"
+                        onClick={openBodyweightDialog}
+                        aria-label="Log bodyweight"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                      </Button>
+                    ) : null}
                     <Button
                       type="button"
                       variant="ghost"
@@ -1552,14 +1751,14 @@ function App() {
                   return (
                     <div
                       key={exercise.key}
-                      className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-border/60 bg-background/65 px-4 py-4"
+                      className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-border/60 bg-background/65 px-3 py-3"
                     >
                       <div>{renderTrendIcon(exercise.trend)}</div>
                       <div className="min-w-0">
                         <p className="truncate text-xs uppercase tracking-wide text-muted-foreground">
                           {exercise.name}
                         </p>
-                        <p className="truncate text-lg font-semibold">
+                        <p className="truncate text-xl font-bold leading-none tabular-nums">
                           {exercise.workingSet} • {exercise.est1RM} est
                         </p>
                         {dashboardGoals[goalKey] ? (
@@ -1583,16 +1782,16 @@ function App() {
               </div>
             ) : null}
 
-            <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/60 bg-background/60 px-4 py-3">
+            <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/60 bg-background/60 px-3 py-2.5">
               <div>
                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Weekly Adherence</p>
-                <p className="text-sm font-semibold">
+                <p className="text-lg font-bold leading-none tabular-nums">
                   {weeklyInsights.completedSessions}/{weeklyInsights.plannedSessions} ({weeklyInsights.adherencePct}%)
                 </p>
               </div>
               <div>
                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Exercise Touch Rate</p>
-                <p className="text-sm font-semibold">{weeklyInsights.exerciseTouchRate}%</p>
+                <p className="text-lg font-bold leading-none tabular-nums">{weeklyInsights.exerciseTouchRate}%</p>
               </div>
             </div>
 
@@ -1887,22 +2086,22 @@ function App() {
                 </div>
               ) : (
                 <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-                  <div className="grid grid-cols-[1.2fr_0.7fr_0.9fr_auto] items-center gap-2 px-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                  <div className="grid grid-cols-[minmax(0,1fr)_64px_64px_120px] items-center gap-2 px-1 text-[11px] uppercase tracking-wide text-muted-foreground">
                     <span>Date</span>
-                    <span>Sets</span>
-                    <span>Reps</span>
-                    <span className="text-right">Actions</span>
+                    <span className="text-center">Sets</span>
+                    <span className="text-center">Reps</span>
+                    <span className="text-center">Actions</span>
                   </div>
                   {sortedSessions.map((session) => {
                     const isEditing = editingSessionId === session.id;
                     const totalReps = session.sets.reduce((sum, set) => sum + set.reps, 0);
                     return (
                       <div key={`session-${session.id}`} className="rounded-md border border-border/60 px-2 py-2">
-                        <div className="grid grid-cols-[1.2fr_0.7fr_0.9fr_auto] items-center gap-2">
-                          <span className="text-sm font-medium">{session.label}</span>
-                          <span className="text-sm">{session.sets.length}</span>
-                          <span className="text-sm">{totalReps}</span>
-                          <div className="flex items-center justify-end gap-1">
+                        <div className="grid grid-cols-[minmax(0,1fr)_64px_64px_120px] items-center gap-2">
+                          <span className="text-base font-semibold tabular-nums">{session.label}</span>
+                          <span className="text-center text-base font-semibold tabular-nums">{session.sets.length}</span>
+                          <span className="text-center text-base font-semibold tabular-nums">{totalReps}</span>
+                          <div className="flex items-center justify-center gap-1">
                             {isEditing ? (
                               <>
                                 <Button
@@ -1987,24 +2186,24 @@ function App() {
             </div>
 
             {latestSession ? (
-              <div className="grid grid-cols-4 gap-2 rounded-lg border border-border/70 bg-background/70 p-3">
+              <div className="grid grid-cols-4 gap-2 rounded-lg border border-border/70 bg-background/70 p-2.5">
                 <div>
                   <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Latest Top Set</p>
-                  <p className="text-sm font-medium">
+                  <p className="text-base font-semibold tabular-nums">
                     {latestSession.topSet.weight}x{latestSession.topSet.reps}
                   </p>
                 </div>
                 <div>
                   <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Current Est. 1RM</p>
-                  <p className="text-sm font-medium">{Math.round(latestSession.est1RM)} {units}</p>
+                  <p className="text-base font-semibold tabular-nums">{Math.round(latestSession.est1RM)} {units}</p>
                 </div>
                 <div>
                   <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Avg Adj Score</p>
-                  <p className="text-sm font-medium">{Math.round(latestSession.adjustedScore)}</p>
+                  <p className="text-base font-semibold tabular-nums">{Math.round(latestSession.adjustedScore)}</p>
                 </div>
                 <div>
                   <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Last Context</p>
-                  <p className="text-sm font-medium">{latestSession.contextTag ?? "normal"}</p>
+                  <p className="text-base font-semibold">{latestSession.contextTag ?? "normal"}</p>
                 </div>
               </div>
             ) : null}
@@ -2061,7 +2260,7 @@ function App() {
               return (
                 <div
                   key={exercise.key}
-                  className="rounded-xl border border-border/70 bg-gradient-to-br from-card to-emerald-950/10 p-3"
+                  className="rounded-xl border border-border/70 bg-gradient-to-br from-card to-emerald-950/10 p-2.5"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <button
@@ -2070,10 +2269,10 @@ function App() {
                       onClick={() => openExerciseDetail(exercise.key)}
                     >
                       <p className="text-lg font-semibold leading-tight">{exercise.name}</p>
-                      <p className="text-sm text-muted-foreground">
+                      <p className="text-base font-semibold tabular-nums">
                         Est. 1RM: {exercise.est1RM || "-"} {units}
                       </p>
-                    <p className="text-sm text-muted-foreground">Working set: {exercise.workingSet}</p>
+                    <p className="text-base font-semibold tabular-nums">Working set: {exercise.workingSet}</p>
                     <p className="text-xs text-muted-foreground">
                       {exercise.totalSets} sets logged
                     </p>
@@ -2680,6 +2879,33 @@ function App() {
               }
               placeholder="Enter target value"
             />
+            {goalEditor?.showDirection ? (
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Goal direction</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    type="button"
+                    variant={goalEditor.direction === "decrease" ? "default" : "outline"}
+                    className="h-9"
+                    onClick={() =>
+                      setGoalEditor((prev) => (prev ? { ...prev, direction: "decrease" } : prev))
+                    }
+                  >
+                    Decrease
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={goalEditor.direction === "increase" ? "default" : "outline"}
+                    className="h-9"
+                    onClick={() =>
+                      setGoalEditor((prev) => (prev ? { ...prev, direction: "increase" } : prev))
+                    }
+                  >
+                    Increase
+                  </Button>
+                </div>
+              </div>
+            ) : null}
             <div className="flex flex-wrap gap-2">
               <Button type="button" variant="outline" className="h-8 px-2 text-xs" onClick={() => nudgeGoal(1, "add")}>
                 +1
@@ -2706,6 +2932,46 @@ function App() {
               <Button variant="outline">Cancel</Button>
             </DialogClose>
             <Button onClick={saveGoal}>Save Goal</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isBodyweightDialogOpen} onOpenChange={setIsBodyweightDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Log Bodyweight</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label htmlFor="bodyweight-date">Date</Label>
+              <Input
+                id="bodyweight-date"
+                type="date"
+                value={bodyweightDate}
+                onChange={(event) => setBodyweightDate(event.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="bodyweight-value">Bodyweight ({units})</Label>
+              <Input
+                id="bodyweight-value"
+                type="number"
+                min={0}
+                step={units === "kg" ? 0.1 : 0.1}
+                value={bodyweightValue}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setBodyweightValue(next === "" ? "" : Number(next));
+                }}
+                placeholder={`Enter ${units}`}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Cancel</Button>
+            </DialogClose>
+            <Button onClick={saveBodyweightEntry}>Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
