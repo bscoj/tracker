@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronUp,
@@ -41,8 +41,9 @@ const LEGACY_STORAGE_KEY_BACKFILL = "gradienttrack_backfill_sessions";
 type Tab = "exercises" | "profile";
 type Units = "lbs" | "kg";
 type Trend = "up" | "flat" | "down";
-type PlotMode = "max_weight" | "weight_reps" | "data";
+type PlotMode = "data" | "trend";
 type SetTag = "easy" | "grindy" | "paused" | "straps";
+type ExerciseGroup = "Chest" | "Back" | "Legs" | "Shoulders" | "Arms" | "Core" | "Other";
 
 type LoggedSet = {
   id: string;
@@ -58,6 +59,7 @@ type ExerciseRecord = {
   id: string;
   key: string;
   name: string;
+  group: ExerciseGroup;
   entries: LoggedSet[];
 };
 
@@ -136,6 +138,8 @@ const commonExercises = [
   "Calf Raise",
 ];
 
+const exerciseGroups: ExerciseGroup[] = ["Chest", "Back", "Legs", "Shoulders", "Arms", "Core", "Other"];
+
 const shellClass =
   "rounded-[1.75rem] border border-green-500/10 bg-[linear-gradient(180deg,rgba(7,12,10,0.98),rgba(3,7,6,1))] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]";
 const subtlePanelClass =
@@ -143,6 +147,17 @@ const subtlePanelClass =
 
 function normalizeExerciseName(name: string) {
   return name.trim().toLowerCase();
+}
+
+function inferExerciseGroup(name: string): ExerciseGroup {
+  const value = normalizeExerciseName(name);
+  if (/(bench|chest|fly|push-up|dip)/.test(value)) return "Chest";
+  if (/(row|pull|pulldown|lat|deadlift|back)/.test(value)) return "Back";
+  if (/(squat|leg|calf|lunge|deadlift|hamstring|quad)/.test(value)) return "Legs";
+  if (/(press|raise|shoulder|delt|arnold)/.test(value)) return "Shoulders";
+  if (/(curl|tricep|bicep|extension)/.test(value)) return "Arms";
+  if (/(core|ab|plank|crunch)/.test(value)) return "Core";
+  return "Other";
 }
 
 function triggerHaptic() {
@@ -235,6 +250,10 @@ function toSnapshot(payload: unknown): AppSnapshot {
           id: typeof exercise.id === "string" ? exercise.id : uuidv4(),
           key,
           name,
+          group:
+            typeof exercise.group === "string" && exerciseGroups.includes(exercise.group as ExerciseGroup)
+              ? (exercise.group as ExerciseGroup)
+              : inferExerciseGroup(name),
           entries: sortEntries(entries),
         } satisfies ExerciseRecord;
       })
@@ -275,6 +294,7 @@ function migrateLegacyPayload(payload: {
       id: uuidv4(),
       key,
       name: cleanName,
+      group: inferExerciseGroup(cleanName),
       entries: [],
     };
     map.set(key, created);
@@ -446,15 +466,45 @@ function buildTimeScale(dates: string[]) {
   return { start, end, getX };
 }
 
-function summarizeReps(entries: LoggedSet[]) {
-  const counts = new Map<number, number>();
+function compactRepsInOrder(entries: LoggedSet[]) {
+  const parts: string[] = [];
+  let lastReps: number | null = null;
+  let count = 0;
+
+  const flush = () => {
+    if (lastReps === null || count === 0) return;
+    parts.push(count > 1 ? `${count}x${lastReps}` : `1x${lastReps}`);
+  };
+
   entries.forEach((entry) => {
-    counts.set(entry.reps, (counts.get(entry.reps) ?? 0) + 1);
+    if (entry.reps === lastReps) {
+      count += 1;
+      return;
+    }
+    flush();
+    lastReps = entry.reps;
+    count = 1;
   });
-  return Array.from(counts.entries())
-    .sort((a, b) => b[0] - a[0])
-    .map(([reps, count]) => `${count}x${reps}`)
-    .join(", ");
+  flush();
+
+  return parts.join(", ");
+}
+
+function summarizeEntriesByWeight(entries: LoggedSet[], units: Units) {
+  const grouped: Array<{ weight: number; entries: LoggedSet[] }> = [];
+
+  entries.forEach((entry) => {
+    const existing = grouped.find((group) => group.weight === entry.weight);
+    if (existing) {
+      existing.entries.push(entry);
+      return;
+    }
+    grouped.push({ weight: entry.weight, entries: [entry] });
+  });
+
+  return grouped
+    .map((group) => `${group.weight} ${units} · ${compactRepsInOrder(group.entries)}`)
+    .join("  •  ");
 }
 
 function buildLinePath(points: Array<{ x: number; y: number }>) {
@@ -486,12 +536,14 @@ function App() {
   const [units, setUnits] = useState<Units>(initialSnapshot.units);
   const [joinDate] = useState<string>(initialSnapshot.joinDate);
   const [selectedExerciseKey, setSelectedExerciseKey] = useState<string | null>(null);
-  const [plotMode, setPlotMode] = useState<PlotMode>("max_weight");
+  const [plotMode, setPlotMode] = useState<PlotMode>("data");
   const [hoveredSessionIndex, setHoveredSessionIndex] = useState<number | null>(null);
   const [expandedDataGroups, setExpandedDataGroups] = useState<Record<string, boolean>>({});
+  const [revealedSwipe, setRevealedSwipe] = useState<{ key: string; side: "left" | "right" } | null>(null);
 
   const [isAddExerciseOpen, setIsAddExerciseOpen] = useState(false);
   const [newExerciseName, setNewExerciseName] = useState("");
+  const [newExerciseGroup, setNewExerciseGroup] = useState<ExerciseGroup>("Other");
   const [exerciseDrafts, setExerciseDrafts] = useState<Record<string, ExerciseDraft>>({});
   const [isHistoricalLogOpen, setIsHistoricalLogOpen] = useState(false);
   const [historicalExerciseKey, setHistoricalExerciseKey] = useState<string | null>(null);
@@ -504,6 +556,7 @@ function App() {
   });
   const [historicalWeight, setHistoricalWeight] = useState("");
   const [historicalReps, setHistoricalReps] = useState("");
+  const touchStateRef = useRef<{ key: string; startX: number } | null>(null);
 
   const [cloudOptIn, setCloudOptIn] = useState<boolean>(
     () => localStorage.getItem(STORAGE_KEY_CLOUD_OPT_IN) === "true",
@@ -751,9 +804,10 @@ function App() {
     const exists = exercises.find((exercise) => exercise.key === key);
     if (exists) {
       setSelectedExerciseKey(exists.key);
-      setPlotMode("max_weight");
+      setPlotMode("data");
       setIsAddExerciseOpen(false);
       setNewExerciseName("");
+      setNewExerciseGroup("Other");
       return;
     }
 
@@ -761,14 +815,16 @@ function App() {
       id: uuidv4(),
       key,
       name: cleanName,
+      group: newExerciseGroup === "Other" ? inferExerciseGroup(cleanName) : newExerciseGroup,
       entries: [],
     };
 
     setExercises((prev) => sortExercises([created, ...prev]));
     setSelectedExerciseKey(created.key);
-    setPlotMode("max_weight");
+    setPlotMode("data");
     setIsAddExerciseOpen(false);
     setNewExerciseName("");
+    setNewExerciseGroup("Other");
     triggerHaptic();
   };
 
@@ -906,6 +962,15 @@ function App() {
       prev.includes(exerciseKey) ? prev.filter((item) => item !== exerciseKey) : [exerciseKey, ...prev],
     );
     setFavoritesUpdatedAt(Date.now());
+    setRevealedSwipe(null);
+    triggerHaptic();
+  };
+
+  const deleteExercise = (exerciseKey: string) => {
+    setExercises((prev) => prev.filter((exercise) => exercise.key !== exerciseKey));
+    setFavoriteExerciseKeys((prev) => prev.filter((item) => item !== exerciseKey));
+    setFavoritesUpdatedAt(Date.now());
+    setRevealedSwipe(null);
     triggerHaptic();
   };
 
@@ -1009,6 +1074,23 @@ function App() {
     [exercises, favoriteExerciseKeys],
   );
 
+  const groupedExercises = useMemo(() => {
+    const groups: Array<{ title: string; items: typeof trackedExercises }> = [];
+    const favorites = trackedExercises.filter((exercise) => exercise.isFavorite);
+    if (favorites.length > 0) {
+      groups.push({ title: "Favorites", items: favorites });
+    }
+
+    exerciseGroups.forEach((group) => {
+      const items = trackedExercises.filter((exercise) => !exercise.isFavorite && exercise.group === group);
+      if (items.length > 0) {
+        groups.push({ title: group, items });
+      }
+    });
+
+    return groups;
+  }, [trackedExercises]);
+
   const selectedExercise = trackedExercises.find((exercise) => exercise.key === selectedExerciseKey) ?? null;
 
   const selectedExerciseSessions = useMemo(() => {
@@ -1091,6 +1173,26 @@ function App() {
     );
   };
 
+  const handleSwipeStart = (exerciseKey: string, clientX: number) => {
+    touchStateRef.current = { key: exerciseKey, startX: clientX };
+  };
+
+  const handleSwipeEnd = (exerciseKey: string, clientX: number) => {
+    const touchState = touchStateRef.current;
+    touchStateRef.current = null;
+    if (!touchState || touchState.key !== exerciseKey) return;
+    const delta = clientX - touchState.startX;
+    if (delta > 48) {
+      setRevealedSwipe({ key: exerciseKey, side: "right" });
+      return;
+    }
+    if (delta < -48) {
+      setRevealedSwipe({ key: exerciseKey, side: "left" });
+      return;
+    }
+    setRevealedSwipe(null);
+  };
+
   const renderChart = () => {
     if (!selectedExercise || selectedExerciseSessions.length === 0) {
       return (
@@ -1100,11 +1202,7 @@ function App() {
       );
     }
 
-    const values =
-      plotMode === "max_weight"
-        ? selectedExerciseSessions.map((session) => session.maxWeight)
-        : selectedExerciseSessions.map((session) => session.repWeightedWeight);
-
+    const values = selectedExerciseSessions.map((session) => session.repWeightedWeight);
     const chart = buildChart(values);
     const timeScale = buildTimeScale(selectedExerciseSessions.map((session) => session.date));
     const linePoints = values.map((value, index) => ({
@@ -1117,10 +1215,13 @@ function App() {
     const focusSession =
       selectedExerciseSessions[focusIndex] ?? selectedExerciseSessions[selectedExerciseSessions.length - 1];
     const focusPoint = linePoints[focusIndex] ?? linePoints[linePoints.length - 1];
+    const tooltipX = Math.min(88, Math.max(12, focusPoint.x));
+    const tooltipY = Math.min(18, Math.max(10, focusPoint.y - 8));
 
     const handleChartMove = (clientX: number, rect: DOMRect) => {
       const relative = Math.max(0, Math.min(rect.width, clientX - rect.left));
-      const pointerTime = timeScale.start + (rect.width === 0 ? 0 : (relative / rect.width) * (timeScale.end - timeScale.start));
+      const pointerTime =
+        timeScale.start + (rect.width === 0 ? 0 : (relative / rect.width) * (timeScale.end - timeScale.start));
       let nextIndex = 0;
       let smallestDistance = Number.POSITIVE_INFINITY;
       selectedExerciseSessions.forEach((session, index) => {
@@ -1135,27 +1236,18 @@ function App() {
 
     return (
       <div className="space-y-3">
-        <div className={`${subtlePanelClass} grid grid-cols-[1.2fr_0.8fr] gap-3 p-3`}>
+        <div className={`${subtlePanelClass} grid grid-cols-[1fr_auto] gap-3 p-3`}>
           <div>
-            <p className="text-[11px] uppercase tracking-[0.18em] text-green-200/70">
-              {plotMode === "max_weight" ? "Max Weight" : "Rep-Weighted Load"}
-            </p>
+            <p className="text-[11px] uppercase tracking-[0.18em] text-green-200/70">Rep-Weighted Trend</p>
             <p className="text-3xl font-semibold leading-none tracking-tight tabular-nums">
-              {Math.round(plotMode === "max_weight" ? focusSession.maxWeight : focusSession.repWeightedWeight)} {units}
+              {Math.round(focusSession.repWeightedWeight)} {units}
             </p>
-            <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-300">
-              <span className="rounded-full border border-green-500/10 bg-green-500/[0.04] px-2.5 py-1">
-                {focusSession.totalSets} sets
-              </span>
-              <span className="rounded-full border border-green-500/10 bg-green-500/[0.04] px-2.5 py-1">
-                {focusSession.totalReps} reps
-              </span>
-            </div>
           </div>
           <div className="text-right">
-            <p className="text-[11px] uppercase tracking-[0.18em] text-green-200/70">Focused Session</p>
-            <p className="text-lg font-semibold">{focusSession.label}</p>
-            <p className="text-xs text-slate-400">{formatAxisDate(focusSession.date)}</p>
+            <p className="text-sm font-medium text-slate-200">{focusSession.label}</p>
+            <p className="text-xs text-slate-400">
+              {focusSession.totalSets} sets • {focusSession.totalReps} reps
+            </p>
           </div>
         </div>
 
@@ -1163,22 +1255,23 @@ function App() {
           <svg
             viewBox="0 0 100 100"
             preserveAspectRatio="none"
-            className="h-72 w-full touch-none"
+            className="h-80 w-full touch-none"
             onPointerMove={(event) => handleChartMove(event.clientX, event.currentTarget.getBoundingClientRect())}
             onPointerDown={(event) => handleChartMove(event.clientX, event.currentTarget.getBoundingClientRect())}
             onPointerLeave={() => setHoveredSessionIndex(selectedExerciseSessions.length - 1)}
           >
-            {[25, 50, 75].map((line) => (
+            {[20, 40, 60, 80].map((line) => (
               <line
                 key={`h-${line}`}
                 x1="0"
                 y1={line}
                 x2="100"
                 y2={line}
-                stroke="rgba(120, 255, 173, 0.12)"
-                strokeWidth="0.45"
+                stroke="rgba(120, 255, 173, 0.1)"
+                strokeWidth="0.35"
               />
             ))}
+
             {selectedExerciseSessions.map((_, index) => {
               if (index === 0 || index === selectedExerciseSessions.length - 1) return null;
               const x = timeScale.getX(selectedExerciseSessions[index]?.date ?? new Date().toISOString());
@@ -1189,9 +1282,9 @@ function App() {
                   y1="0"
                   x2={x}
                   y2="92"
-                  stroke="rgba(120, 255, 173, 0.12)"
+                  stroke="rgba(120, 255, 173, 0.08)"
                   strokeDasharray="2 2"
-                  strokeWidth="0.35"
+                  strokeWidth="0.3"
                 />
               );
             })}
@@ -1201,17 +1294,17 @@ function App() {
               y1="0"
               x2={focusPoint.x}
               y2="92"
-              stroke="rgba(158, 255, 190, 0.28)"
+              stroke="rgba(158, 255, 190, 0.2)"
               strokeDasharray="2 2"
-              strokeWidth="0.45"
+              strokeWidth="0.4"
             />
 
-            <path d={areaPath} fill="rgba(34, 197, 94, 0.18)" />
+            <path d={areaPath} fill="rgba(34, 197, 94, 0.14)" />
             <path
               d={linePath}
               fill="none"
-              stroke="rgba(110, 231, 183, 0.98)"
-              strokeWidth="1.8"
+              stroke="rgba(110,231,183,0.95)"
+              strokeWidth="1.6"
               strokeLinejoin="round"
               strokeLinecap="round"
             />
@@ -1224,58 +1317,30 @@ function App() {
                   <circle
                     cx={point.x}
                     cy={point.y}
-                    r={isFocused ? 2 : 1.2}
+                    r={isFocused ? 1.4 : 0.9}
                     fill="rgba(4,9,7,0.98)"
                     stroke="rgba(110,231,183,0.98)"
-                    strokeWidth={isFocused ? 1.2 : 0.9}
+                    strokeWidth={isFocused ? 1 : 0.7}
                   />
                 </g>
               );
             })}
 
-            <g transform={`translate(${focusPoint.x}, ${Math.max(14, focusPoint.y - 8)})`}>
+            <g transform={`translate(${tooltipX}, ${tooltipY})`}>
               <rect
-                x="-12"
+                x="-13"
                 y="-8"
                 rx="4"
-                width="24"
+                width="26"
                 height="10"
-                fill="rgba(17,24,20,0.85)"
-                stroke="rgba(110,231,183,0.22)"
-                strokeWidth="0.35"
+                fill="rgba(8,12,10,0.92)"
+                stroke="rgba(110,231,183,0.2)"
+                strokeWidth="0.3"
               />
-              <text
-                x="0"
-                y="-1.2"
-                textAnchor="middle"
-                fontSize="3.2"
-                fill="rgba(236,253,245,0.95)"
-              >
-                {Math.round(plotMode === "max_weight" ? focusSession.maxWeight : focusSession.repWeightedWeight)}
+              <text x="0" y="-1.2" textAnchor="middle" fontSize="3.1" fill="rgba(236,253,245,0.95)">
+                {Math.round(focusSession.repWeightedWeight)}
               </text>
             </g>
-
-            {plotMode === "weight_reps"
-              ? selectedExerciseSessions.flatMap((session) =>
-                  session.entries.map((entry, entryIndex) => {
-                    const xBase = timeScale.getX(session.date);
-                    const x = Math.max(3, Math.min(97, xBase + (entryIndex - (session.entries.length - 1) / 2) * 1.1));
-                    const y = chart.getY(entry.weight);
-                    const radius = Math.min(1.8, 0.55 + entry.reps * 0.06);
-                    return (
-                      <circle
-                        key={entry.id}
-                        cx={x}
-                        cy={y}
-                        r={radius}
-                        fill="none"
-                        stroke="rgba(167,243,208,0.82)"
-                        strokeWidth="0.7"
-                      />
-                    );
-                  }),
-                )
-              : null}
           </svg>
 
           <div className="mt-2 grid grid-cols-[1fr_auto] items-end gap-2 text-xs text-slate-400">
@@ -1347,27 +1412,20 @@ function App() {
           </div>
         </div>
 
-        <div className={`${subtlePanelClass} grid grid-cols-3 gap-2 p-1`}>
-          <Button
-            variant={plotMode === "max_weight" ? "default" : "ghost"}
-            className="h-10 rounded-xl"
-            onClick={() => setPlotMode("max_weight")}
-          >
-            Max Weight
-          </Button>
-          <Button
-            variant={plotMode === "weight_reps" ? "default" : "ghost"}
-            className="h-10 rounded-xl"
-            onClick={() => setPlotMode("weight_reps")}
-          >
-            Weight x Reps
-          </Button>
+        <div className={`${subtlePanelClass} grid grid-cols-2 gap-2 p-1`}>
           <Button
             variant={plotMode === "data" ? "default" : "ghost"}
             className="h-10 rounded-xl"
             onClick={() => setPlotMode("data")}
           >
             Data
+          </Button>
+          <Button
+            variant={plotMode === "trend" ? "default" : "ghost"}
+            className="h-10 rounded-xl"
+            onClick={() => setPlotMode("trend")}
+          >
+            Trend
           </Button>
         </div>
 
@@ -1394,7 +1452,7 @@ function App() {
                       >
                         <div>
                           <p className="text-lg font-semibold">{group.label}</p>
-                          <p className="text-sm text-slate-400">{summarizeReps(group.entries)}</p>
+                          <p className="text-sm text-slate-400">{summarizeEntriesByWeight(group.entries, units)}</p>
                         </div>
                         <span className="inline-flex items-center gap-2 text-xs text-slate-400">
                           {group.entries.length} sets
@@ -1411,7 +1469,7 @@ function App() {
                           {group.entries.map((entry) => (
                             <div
                               key={entry.id}
-                              className="grid grid-cols-[1fr_1fr_auto] items-center gap-2 rounded-2xl border border-green-500/10 bg-green-500/[0.03] p-2"
+                              className="grid grid-cols-[1fr_1fr_auto_auto] items-center gap-2 rounded-2xl border border-green-500/10 bg-green-500/[0.03] p-2"
                             >
                               <Input
                                 type="number"
@@ -1441,6 +1499,7 @@ function App() {
                                 }
                                 className="h-10 rounded-xl border-white/8 bg-white/[0.03]"
                               />
+                              <div className="text-[11px] text-slate-400">{formatShortDate(entry.date)}</div>
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -1479,105 +1538,143 @@ function App() {
           </Card>
         ) : (
           <div className={`min-h-0 flex-1 overflow-y-auto ${shellClass}`}>
-            <div className="divide-y divide-white/6">
-              {trackedExercises.map((exercise) => {
-                const draft = getDraft(exercise.key);
-                return (
-                  <div key={exercise.key} className="px-4 py-3">
-                    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
-                      <button
-                        type="button"
-                        className="min-w-0 text-left"
-                        onClick={() => {
-                          setSelectedExerciseKey(exercise.key);
-                          setPlotMode("max_weight");
-                        }}
-                      >
-                        <p className="truncate text-2xl font-semibold leading-tight">{exercise.name}</p>
-                        <p className="mt-1 text-lg font-medium leading-none tabular-nums text-slate-200">
-                          {exercise.stats.maxWeight} {units}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-400">
-                          {exercise.stats.latestEntry
-                            ? `Last ${exercise.stats.latestEntry.weight} x ${exercise.stats.latestEntry.reps}`
-                            : "No sets logged yet"}
-                        </p>
-                      </button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className={`mt-1 rounded-full ${exercise.isFavorite ? "text-green-300" : "text-slate-500"}`}
-                        onClick={() => toggleFavorite(exercise.key)}
-                      >
-                        <Pin className="h-4 w-4" />
-                      </Button>
-                    </div>
-
-                    <div className="mt-3 grid grid-cols-[1fr_1fr_auto] gap-2">
-                      <Input
-                        type="number"
-                        inputMode="decimal"
-                        placeholder={`Weight (${units})`}
-                        value={draft.weight}
-                        onChange={(event) => setDraftValue(exercise.key, "weight", event.target.value)}
-                        className="h-11 rounded-2xl border-white/8 bg-white/[0.03]"
-                      />
-                      <Input
-                        type="number"
-                        inputMode="numeric"
-                        placeholder="Reps"
-                        value={draft.reps}
-                        onChange={(event) => setDraftValue(exercise.key, "reps", event.target.value)}
-                        className="h-11 rounded-2xl border-white/8 bg-white/[0.03]"
-                      />
-                      <Button className="h-11 rounded-2xl px-4" onClick={() => queueSet(exercise.key)}>
-                        Log
-                      </Button>
-                    </div>
-
-                    {draft.pendingSets.length > 0 ? (
-                      <div className={`${subtlePanelClass} mt-3 space-y-2 p-3`}>
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
-                            Current Session
-                          </p>
-                          <div className="flex gap-2">
-                            <Button
-                              variant="ghost"
-                              className="h-8 rounded-xl px-2 text-xs text-slate-400"
-                              onClick={() => clearSessionDraft(exercise.key)}
+            <div className="space-y-6 px-4 py-4">
+              {groupedExercises.map((group) => (
+                <section key={group.title} className="space-y-2">
+                  <p className="px-1 text-[11px] uppercase tracking-[0.18em] text-slate-500">{group.title}</p>
+                  <div className="divide-y divide-white/6 overflow-hidden rounded-[1.4rem] border border-white/6 bg-white/[0.02]">
+                    {group.items.map((exercise) => {
+                      const draft = getDraft(exercise.key);
+                      const isRevealedLeft =
+                        revealedSwipe?.key === exercise.key && revealedSwipe.side === "left";
+                      const isRevealedRight =
+                        revealedSwipe?.key === exercise.key && revealedSwipe.side === "right";
+                      return (
+                        <div key={exercise.key} className="px-3 py-3">
+                          <div className="relative overflow-hidden rounded-2xl">
+                            <div className="absolute inset-0 flex items-center justify-between">
+                              <button
+                                type="button"
+                                className="flex h-full w-20 items-center justify-center rounded-l-2xl bg-green-500/12 text-green-300"
+                                onClick={() => toggleFavorite(exercise.key)}
+                              >
+                                <Pin className="h-4 w-4" />
+                              </button>
+                              <button
+                                type="button"
+                                className="flex h-full w-20 items-center justify-center rounded-r-2xl bg-red-500/12 text-red-300"
+                                onClick={() => deleteExercise(exercise.key)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                            <div
+                              className={`relative rounded-2xl bg-background/95 px-3 py-2 transition-transform duration-200 ${
+                                isRevealedLeft ? "-translate-x-16" : isRevealedRight ? "translate-x-16" : "translate-x-0"
+                              }`}
+                              onTouchStart={(event) =>
+                                handleSwipeStart(exercise.key, event.changedTouches[0]?.clientX ?? 0)
+                              }
+                              onTouchEnd={(event) =>
+                                handleSwipeEnd(exercise.key, event.changedTouches[0]?.clientX ?? 0)
+                              }
                             >
-                              Clear
-                            </Button>
-                            <Button
-                              className="h-8 rounded-xl px-3 text-xs"
-                              onClick={() => saveSessionDraft(exercise.key)}
-                            >
-                              Save
+                              <button
+                                type="button"
+                                className="block w-full text-left"
+                                onClick={() => {
+                                  setSelectedExerciseKey(exercise.key);
+                                  setPlotMode("data");
+                                  setRevealedSwipe(null);
+                                }}
+                              >
+                                <div className="flex items-end justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-2xl font-semibold leading-tight">{exercise.name}</p>
+                                    <p className="mt-1 text-base font-medium leading-none tabular-nums text-slate-300">
+                                      Max {exercise.stats.maxWeight} {units}
+                                    </p>
+                                  </div>
+                                  {exercise.isFavorite ? (
+                                    <Pin className="h-4 w-4 shrink-0 text-green-300" />
+                                  ) : null}
+                                </div>
+                                <p className="mt-1 text-xs text-slate-500">
+                                  {exercise.stats.latestEntry
+                                    ? `Last ${exercise.stats.latestEntry.weight} x ${exercise.stats.latestEntry.reps}`
+                                    : "No sets logged yet"}
+                                </p>
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 grid grid-cols-[1fr_1fr_auto] gap-2">
+                            <Input
+                              type="number"
+                              inputMode="decimal"
+                              placeholder={`Weight (${units})`}
+                              value={draft.weight}
+                              onChange={(event) => setDraftValue(exercise.key, "weight", event.target.value)}
+                              className="h-11 rounded-2xl border-white/8 bg-white/[0.03]"
+                            />
+                            <Input
+                              type="number"
+                              inputMode="numeric"
+                              placeholder="Reps"
+                              value={draft.reps}
+                              onChange={(event) => setDraftValue(exercise.key, "reps", event.target.value)}
+                              className="h-11 rounded-2xl border-white/8 bg-white/[0.03]"
+                            />
+                            <Button className="h-11 rounded-2xl px-4" onClick={() => queueSet(exercise.key)}>
+                              Log
                             </Button>
                           </div>
+
+                          {draft.pendingSets.length > 0 ? (
+                            <div className={`${subtlePanelClass} mt-3 space-y-2 p-3`}>
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
+                                  Current Session
+                                </p>
+                                <div className="flex gap-2">
+                                  <Button
+                                    variant="ghost"
+                                    className="h-8 rounded-xl px-2 text-xs text-slate-400"
+                                    onClick={() => clearSessionDraft(exercise.key)}
+                                  >
+                                    Clear
+                                  </Button>
+                                  <Button
+                                    className="h-8 rounded-xl px-3 text-xs"
+                                    onClick={() => saveSessionDraft(exercise.key)}
+                                  >
+                                    Save
+                                  </Button>
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {draft.pendingSets.map((set) => (
+                                  <button
+                                    key={set.id}
+                                    type="button"
+                                    className="inline-flex items-center gap-2 rounded-full border border-white/8 bg-white/[0.03] px-3 py-1 text-sm text-slate-200"
+                                    onClick={() => removePendingSet(exercise.key, set.id)}
+                                  >
+                                    <span className="tabular-nums">
+                                      {set.weight}x{set.reps}
+                                    </span>
+                                    <X className="h-3 w-3 text-slate-400" />
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          {draft.pendingSets.map((set) => (
-                            <button
-                              key={set.id}
-                              type="button"
-                              className="inline-flex items-center gap-2 rounded-full border border-white/8 bg-white/[0.03] px-3 py-1 text-sm text-slate-200"
-                              onClick={() => removePendingSet(exercise.key, set.id)}
-                            >
-                              <span className="tabular-nums">
-                                {set.weight}x{set.reps}
-                              </span>
-                              {set.tag ? <span className="text-xs text-green-200">{set.tag}</span> : null}
-                              <X className="h-3 w-3 text-slate-400" />
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
+                      );
+                    })}
                   </div>
-                );
-              })}
+                </section>
+              ))}
             </div>
           </div>
         )}
@@ -1782,8 +1879,25 @@ function App() {
               className="w-full min-w-0"
               placeholder="Exercise name"
               value={newExerciseName}
-              onChange={(event) => setNewExerciseName(event.target.value)}
+              onChange={(event) => {
+                const value = event.target.value;
+                setNewExerciseName(value);
+                setNewExerciseGroup(inferExerciseGroup(value));
+              }}
             />
+            <div className="grid grid-cols-2 gap-2">
+              {exerciseGroups.map((group) => (
+                <Button
+                  key={group}
+                  type="button"
+                  variant={newExerciseGroup === group ? "default" : "outline"}
+                  className="h-9 rounded-xl"
+                  onClick={() => setNewExerciseGroup(group)}
+                >
+                  {group}
+                </Button>
+              ))}
+            </div>
             {filteredCommonExercises.length > 0 ? (
               <div className="flex max-w-full flex-wrap gap-2 overflow-hidden">
                 {filteredCommonExercises.map((exercise) => (
@@ -1792,7 +1906,10 @@ function App() {
                     type="button"
                     variant="outline"
                     className="h-8 max-w-full rounded-full px-3 text-xs"
-                    onClick={() => setNewExerciseName(exercise)}
+                    onClick={() => {
+                      setNewExerciseName(exercise);
+                      setNewExerciseGroup(inferExerciseGroup(exercise));
+                    }}
                   >
                     {exercise}
                   </Button>
