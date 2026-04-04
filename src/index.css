@@ -52,25 +52,25 @@
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
+    --background: 150 18% 4%;
     --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
+    --card: 150 18% 4%;
     --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
+    --popover: 150 18% 4%;
     --popover-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
+    --primary: 151 55% 55%;
+    --primary-foreground: 150 30% 6%;
+    --secondary: 150 18% 10%;
     --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
+    --muted: 150 18% 10%;
+    --muted-foreground: 156 10% 62%;
+    --accent: 150 18% 10%;
     --accent-foreground: 210 40% 98%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    --border: 151 18% 12%;
+    --input: 151 18% 12%;
+    --ring: 151 55% 55%;
   }
 
   * {
@@ -78,7 +78,9 @@
   }
 
   body {
-    background-color: hsl(var(--background));
+    background:
+      radial-gradient(circle at top, rgba(74, 222, 128, 0.08), transparent 30%),
+      linear-gradient(180deg, #050807 0%, #020403 100%);
     color: hsl(var(--foreground));
     min-height: 100vh;
   }
@@ -90,7 +92,19 @@
   }
 
   .gradient-card {
-    @apply border border-border/70 bg-gradient-to-br from-card to-emerald-950/10 transition-all duration-200;
+    @apply border border-border/70 bg-gradient-to-br from-card to-green-950/10 transition-all duration-200;
+  }
+
+  .gt-kicker {
+    @apply text-[11px] uppercase tracking-[0.18em] text-slate-400;
+  }
+
+  .gt-value {
+    @apply text-2xl font-semibold tracking-tight tabular-nums;
+  }
+
+  .gt-meta {
+    @apply text-sm text-slate-400;
   }
 }
 

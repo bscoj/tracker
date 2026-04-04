@@ -2,30 +2,19 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ChevronDown,
   ChevronUp,
-  Clock,
   Dumbbell,
-  Info,
-  LineChart,
   Minus,
+  Pin,
   Plus,
-  Target,
+  Trash2,
   TrendingDown,
   TrendingUp,
-  Trash2,
   User,
+  X,
 } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
 import {
   Dialog,
   DialogClose,
@@ -36,111 +25,89 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import type { Exercise, SessionContext, Set, Workout } from "@/types";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
-const STORAGE_KEY_CURRENT = "gradienttrack_current";
-const STORAGE_KEY_HISTORY = "gradienttrack_history";
-const STORAGE_KEY_UNITS = "gradienttrack_units";
-const STORAGE_KEY_JOIN_DATE = "gradienttrack_join_date";
-const STORAGE_KEY_EXERCISE_CATALOG = "gradienttrack_exercise_catalog";
-const STORAGE_KEY_BACKFILL = "gradienttrack_backfill_sessions";
-const STORAGE_KEY_DASH_ORDER = "gradienttrack_dashboard_order";
-const STORAGE_KEY_DASH_TRACKED = "gradienttrack_dashboard_tracked_exercises";
-const STORAGE_KEY_DASH_GOALS = "gradienttrack_dashboard_goals";
-const STORAGE_KEY_DASH_GOAL_DIRECTION = "gradienttrack_dashboard_goal_direction";
-const STORAGE_KEY_DASH_PREFS_UPDATED = "gradienttrack_dashboard_prefs_updated_at";
+const STORAGE_KEY_SNAPSHOT = "gradienttrack_snapshot_v2";
 const STORAGE_KEY_CLOUD_OPT_IN = "gradienttrack_cloud_opt_in";
-const STORAGE_KEY_BODYWEIGHT_LOG = "gradienttrack_bodyweight_log";
 
-type Tab = "dashboard" | "exercises" | "workouts" | "profile";
+const LEGACY_STORAGE_KEY_CURRENT = "gradienttrack_current";
+const LEGACY_STORAGE_KEY_HISTORY = "gradienttrack_history";
+const LEGACY_STORAGE_KEY_UNITS = "gradienttrack_units";
+const LEGACY_STORAGE_KEY_JOIN_DATE = "gradienttrack_join_date";
+const LEGACY_STORAGE_KEY_EXERCISE_CATALOG = "gradienttrack_exercise_catalog";
+const LEGACY_STORAGE_KEY_BACKFILL = "gradienttrack_backfill_sessions";
+
+type Tab = "exercises" | "profile";
 type Units = "lbs" | "kg";
 type Trend = "up" | "flat" | "down";
-type GoalDirection = "increase" | "decrease";
-type ExerciseState = "normal" | "stalled" | "breakthrough";
-type Confidence = "low" | "high";
-type VizMode = "one_rm" | "set_map" | "data";
-type DashboardMetricId =
-  | "weekly_consistency"
-  | "key_lift_progress"
-  | "bodyweight_trend"
-  | "movement_balance";
+type PlotMode = "max_weight" | "weight_reps" | "data";
+type SetTag = "easy" | "grindy" | "paused" | "straps";
 
-type BackfillSet = {
+type LoggedSet = {
   id: string;
+  date: string;
   weight: number;
   reps: number;
+  sessionId?: string;
+  tag?: SetTag;
+  note?: string;
 };
 
-type BackfillSession = {
+type ExerciseRecord = {
   id: string;
-  exerciseName: string;
-  date: string;
-  sets: BackfillSet[];
-  contextTag?: SessionContext;
-};
-
-type SessionSource =
-  | { kind: "workout"; workoutId: string; exerciseId: string }
-  | { kind: "backfill"; backfillId: string };
-
-type ExerciseSessionPoint = {
-  id: string;
-  date: string;
-  label: string;
-  sets: Array<{ id: string; weight: number; reps: number }>;
-  topSet: { weight: number; reps: number };
-  est1RM: number;
-  adjustedScore: number;
-  volume: number;
-  contextTag?: SessionContext;
-  source: SessionSource;
-};
-
-type TrackedExercise = {
   key: string;
   name: string;
-  sessions: ExerciseSessionPoint[];
-  totalSets: number;
-  totalAdjustedLoad: number;
-  est1RM: number;
-  workingSet: string;
-  trend: Trend;
-  state: ExerciseState;
-  confidence: Confidence;
-  nextTarget: string;
-};
-
-type DashboardMetric = {
-  id: DashboardMetricId;
-  title: string;
-  value: string;
-  trend: Trend;
-  goalUnit: string;
-};
-
-type BodyweightEntry = {
-  id: string;
-  date: string;
-  value: number;
+  entries: LoggedSet[];
 };
 
 type AppSnapshot = {
-  currentWorkout: Workout | null;
-  history: Workout[];
+  exercises: ExerciseRecord[];
+  favoriteExerciseKeys: string[];
+  favoritesUpdatedAt: number;
   units: Units;
-  exerciseCatalog: string[];
-  backfillSessions: BackfillSession[];
-  dashboardOrder: DashboardMetricId[];
-  trackedDashboardExercises: string[];
-  dashboardGoals: Record<string, number>;
-  dashboardGoalDirection: Record<string, GoalDirection>;
-  dashboardPrefsUpdatedAt: number;
-  bodyweightLog: BodyweightEntry[];
   joinDate: string;
+};
+
+type PendingSet = {
+  id: string;
+  createdAt: string;
+  weight: number;
+  reps: number;
+  tag?: SetTag;
+  note?: string;
+};
+
+type ExerciseDraft = {
+  weight: string;
+  reps: string;
+  tag: SetTag | "";
+  note: string;
+  sessionId: string;
+  pendingSets: PendingSet[];
+};
+
+type DayGroup = {
+  dayKey: string;
+  label: string;
+  entries: LoggedSet[];
+};
+
+type LegacyWorkout = {
+  id?: string;
+  date: string;
+  exercises?: Array<{
+    id?: string;
+    name: string;
+    sets?: Array<{ id?: string; weight: number; reps: number }>;
+  }>;
+};
+
+type LegacyBackfill = {
+  id?: string;
+  date: string;
+  exerciseName: string;
+  sets?: Array<{ id?: string; weight: number; reps: number }>;
 };
 
 const commonExercises = [
@@ -169,26 +136,258 @@ const commonExercises = [
   "Calf Raise",
 ];
 
-const defaultDashboardOrder: DashboardMetricId[] = [
-  "weekly_consistency",
-  "key_lift_progress",
-  "bodyweight_trend",
-  "movement_balance",
-];
-const sessionContextOptions: SessionContext[] = ["great", "normal", "fatigued", "rushed"];
+const shellClass =
+  "rounded-[1.75rem] border border-green-500/10 bg-[linear-gradient(180deg,rgba(7,12,10,0.98),rgba(3,7,6,1))] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]";
+const subtlePanelClass =
+  "rounded-2xl border border-green-500/10 bg-green-500/[0.03] shadow-[inset_0_1px_0_rgba(255,255,255,0.015)]";
 
 function normalizeExerciseName(name: string) {
   return name.trim().toLowerCase();
 }
 
-function estimate1RM(weight: number, reps: number) {
-  if (weight <= 0 || reps <= 0 || reps >= 37) return 0;
-  return weight * (36 / (37 - reps));
+function triggerHaptic() {
+  if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+    navigator.vibrate(10);
+  }
 }
 
-function estimateSessionScore(weight: number, reps: number) {
-  if (weight <= 0 || reps <= 0) return 0;
-  return weight * (1 + reps / 30);
+function formatShortDate(date: string) {
+  return new Date(date).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function formatAxisDate(date: string) {
+  return new Date(date).toLocaleDateString(undefined, {
+    month: "short",
+    year: "2-digit",
+  });
+}
+
+function parseJson<T>(value: string | null): T | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
+  }
+}
+
+function sortEntries(entries: LoggedSet[]) {
+  return [...entries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+}
+
+function sortExercises(exercises: ExerciseRecord[]) {
+  return [...exercises].sort((a, b) => {
+    const latestA = a.entries[a.entries.length - 1]?.date ?? "";
+    const latestB = b.entries[b.entries.length - 1]?.date ?? "";
+    if (latestA !== latestB) return latestB.localeCompare(latestA);
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function createEmptySnapshot(units: Units = "lbs", joinDate = new Date().toISOString()): AppSnapshot {
+  return {
+    exercises: [],
+    favoriteExerciseKeys: [],
+    favoritesUpdatedAt: 0,
+    units,
+    joinDate,
+  };
+}
+
+function toSnapshot(payload: unknown): AppSnapshot {
+  if (!payload || typeof payload !== "object") {
+    return createEmptySnapshot();
+  }
+
+  const candidate = payload as Partial<AppSnapshot> & {
+    currentWorkout?: LegacyWorkout | null;
+    history?: LegacyWorkout[];
+    exerciseCatalog?: string[];
+    backfillSessions?: LegacyBackfill[];
+  };
+
+  if (Array.isArray(candidate.exercises)) {
+    const exercises = candidate.exercises
+      .map((exercise) => {
+        const name = typeof exercise.name === "string" ? exercise.name.trim() : "";
+        const key = name ? normalizeExerciseName(name) : "";
+        if (!name || !key) return null;
+
+        const entries = Array.isArray(exercise.entries)
+          ? exercise.entries
+              .filter(
+                (entry): entry is LoggedSet =>
+                  Boolean(
+                    entry &&
+                      typeof entry.id === "string" &&
+                      typeof entry.date === "string" &&
+                      typeof entry.weight === "number" &&
+                      typeof entry.reps === "number",
+                  ),
+              )
+              .filter((entry) => entry.weight > 0 && entry.reps > 0)
+          : [];
+
+        return {
+          id: typeof exercise.id === "string" ? exercise.id : uuidv4(),
+          key,
+          name,
+          entries: sortEntries(entries),
+        } satisfies ExerciseRecord;
+      })
+      .filter((exercise): exercise is ExerciseRecord => Boolean(exercise));
+
+    return {
+      exercises: sortExercises(exercises),
+      favoriteExerciseKeys: Array.isArray(candidate.favoriteExerciseKeys)
+        ? candidate.favoriteExerciseKeys.filter((item): item is string => typeof item === "string")
+        : [],
+      favoritesUpdatedAt:
+        typeof candidate.favoritesUpdatedAt === "number" ? candidate.favoritesUpdatedAt : 0,
+      units: candidate.units === "kg" ? "kg" : "lbs",
+      joinDate: typeof candidate.joinDate === "string" ? candidate.joinDate : new Date().toISOString(),
+    };
+  }
+
+  return migrateLegacyPayload(candidate);
+}
+
+function migrateLegacyPayload(payload: {
+  currentWorkout?: LegacyWorkout | null;
+  history?: LegacyWorkout[];
+  exerciseCatalog?: string[];
+  backfillSessions?: LegacyBackfill[];
+  units?: string;
+  joinDate?: string;
+}): AppSnapshot {
+  const map = new Map<string, ExerciseRecord>();
+
+  const ensureExercise = (name: string) => {
+    const cleanName = name.trim();
+    const key = normalizeExerciseName(cleanName);
+    if (!cleanName || !key) return null;
+    const existing = map.get(key);
+    if (existing) return existing;
+    const created: ExerciseRecord = {
+      id: uuidv4(),
+      key,
+      name: cleanName,
+      entries: [],
+    };
+    map.set(key, created);
+    return created;
+  };
+
+  const addEntry = (name: string, date: string, weight: number, reps: number, id?: string) => {
+    if (weight <= 0 || reps <= 0 || !date) return;
+    const exercise = ensureExercise(name);
+    if (!exercise) return;
+    exercise.entries.push({
+      id: id ?? uuidv4(),
+      date,
+      weight,
+      reps,
+    });
+  };
+
+  const workouts = [
+    ...(Array.isArray(payload.history) ? payload.history : []),
+    ...(payload.currentWorkout ? [payload.currentWorkout] : []),
+  ];
+
+  workouts.forEach((workout) => {
+    workout.exercises?.forEach((exercise) => {
+      exercise.sets?.forEach((set) => {
+        addEntry(exercise.name, workout.date, Number(set.weight), Number(set.reps), set.id);
+      });
+    });
+  });
+
+  (payload.backfillSessions ?? []).forEach((session) => {
+    session.sets?.forEach((set) => {
+      addEntry(session.exerciseName, session.date, Number(set.weight), Number(set.reps), set.id);
+    });
+  });
+
+  (payload.exerciseCatalog ?? []).forEach((exerciseName) => {
+    ensureExercise(exerciseName);
+  });
+
+  return {
+    exercises: sortExercises(
+      Array.from(map.values()).map((exercise) => ({
+        ...exercise,
+        entries: sortEntries(exercise.entries),
+      })),
+    ),
+    favoriteExerciseKeys: [],
+    favoritesUpdatedAt: 0,
+    units: payload.units === "kg" ? "kg" : "lbs",
+    joinDate: typeof payload.joinDate === "string" ? payload.joinDate : new Date().toISOString(),
+  };
+}
+
+function loadLocalSnapshot() {
+  const current = parseJson<AppSnapshot>(localStorage.getItem(STORAGE_KEY_SNAPSHOT));
+  if (current) return toSnapshot(current);
+
+  return migrateLegacyPayload({
+    currentWorkout: parseJson<LegacyWorkout>(localStorage.getItem(LEGACY_STORAGE_KEY_CURRENT)),
+    history: parseJson<LegacyWorkout[]>(localStorage.getItem(LEGACY_STORAGE_KEY_HISTORY)) ?? [],
+    exerciseCatalog:
+      parseJson<string[]>(localStorage.getItem(LEGACY_STORAGE_KEY_EXERCISE_CATALOG)) ?? [],
+    backfillSessions:
+      parseJson<LegacyBackfill[]>(localStorage.getItem(LEGACY_STORAGE_KEY_BACKFILL)) ?? [],
+    units: localStorage.getItem(LEGACY_STORAGE_KEY_UNITS) ?? "lbs",
+    joinDate: localStorage.getItem(LEGACY_STORAGE_KEY_JOIN_DATE) ?? new Date().toISOString(),
+  });
+}
+
+function mergeSnapshots(local: AppSnapshot, cloud: AppSnapshot): AppSnapshot {
+  const map = new Map<string, ExerciseRecord>();
+
+  const mergeExercise = (exercise: ExerciseRecord) => {
+    const existing = map.get(exercise.key);
+    if (!existing) {
+      map.set(exercise.key, {
+        ...exercise,
+        entries: sortEntries(exercise.entries),
+      });
+      return;
+    }
+
+    const entryMap = new Map<string, LoggedSet>();
+    [...existing.entries, ...exercise.entries].forEach((entry) => {
+      const dedupeKey = entry.id || `${entry.date}:${entry.weight}:${entry.reps}`;
+      entryMap.set(dedupeKey, entry);
+    });
+
+    map.set(exercise.key, {
+      ...existing,
+      name: exercise.name || existing.name,
+      entries: sortEntries(Array.from(entryMap.values())),
+    });
+  };
+
+  cloud.exercises.forEach(mergeExercise);
+  local.exercises.forEach(mergeExercise);
+
+  const localJoin = new Date(local.joinDate).getTime();
+  const cloudJoin = new Date(cloud.joinDate).getTime();
+
+  return {
+    exercises: sortExercises(Array.from(map.values())),
+    favoriteExerciseKeys:
+      (local.favoritesUpdatedAt ?? 0) >= (cloud.favoritesUpdatedAt ?? 0)
+        ? local.favoriteExerciseKeys
+        : cloud.favoriteExerciseKeys,
+    favoritesUpdatedAt: Math.max(local.favoritesUpdatedAt ?? 0, cloud.favoritesUpdatedAt ?? 0),
+    units: local.units ?? cloud.units,
+    joinDate: localJoin < cloudJoin ? local.joinDate : cloud.joinDate,
+  };
 }
 
 function getTrend(values: number[]) {
@@ -201,213 +400,111 @@ function getTrend(values: number[]) {
   return "flat" as Trend;
 }
 
-function getConfidence(sessionCount: number): Confidence {
-  return sessionCount < 3 ? "low" : "high";
-}
-
-function classifyExerciseState(values: number[]): ExerciseState {
-  if (values.length < 4) return "normal";
-  const latest = values[values.length - 1];
-  const recent8 = values.slice(-8);
-  const recent4 = values.slice(-4);
-  const prior = values.slice(0, -1);
-
-  const priorHigh = prior.length > 0 ? Math.max(...prior) : latest;
-  if (latest >= priorHigh * 1.005) return "breakthrough";
-
-  const band = Math.max(...recent4) - Math.min(...recent4);
-  const baseline = recent4[0] || 1;
-  const driftPct = (band / baseline) * 100;
-  if (driftPct < 1.5 && latest < Math.max(...recent8) * 0.995) return "stalled";
-
-  return "normal";
-}
-
-function getNextTarget(topSet: { weight: number; reps: number }, trend: Trend, units: Units) {
-  const weightStep = units === "kg" ? 2.5 : 5;
-  if (topSet.weight <= 0 || topSet.reps <= 0) return "Add a baseline session";
-  if (trend === "up") return `Next: ${topSet.weight + weightStep} x ${topSet.reps}`;
-  if (trend === "down") return `Next: ${topSet.weight} x ${Math.max(1, topSet.reps + 1)}`;
-  return `Next: ${topSet.weight} x ${topSet.reps + 1}`;
-}
-
-function triggerHaptic() {
-  if (typeof navigator !== "undefined" && "vibrate" in navigator) {
-    navigator.vibrate(10);
-  }
-}
-
-function keepLastThirtyDays(workouts: Workout[]) {
-  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  return workouts.filter((workout) => new Date(workout.date).getTime() > cutoff);
-}
-
-function formatShortDate(date: string) {
-  return new Date(date).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
-}
-
-function toDateInputValue(date = new Date()) {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function getDayKey(date: string) {
-  return date.slice(0, 10);
-}
-
-function moveItem<T>(list: T[], fromIndex: number, toIndex: number) {
-  if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return list;
-  const cloned = [...list];
-  const [moved] = cloned.splice(fromIndex, 1);
-  if (!moved) return list;
-  cloned.splice(toIndex, 0, moved);
-  return cloned;
-}
-
-function buildChartScale(values: number[]) {
-  const min = 0;
-  const max = Math.max(...values);
-  const span = Math.max(max - min, 1);
-  const lower = min;
-  const upper = max + span * 0.12;
-  const domain = Math.max(upper - lower, 1);
-  const toY = (value: number) => 90 - ((value - lower) / domain) * 80;
-  const ticks = [upper, lower + domain / 2, lower].map((tick) => Math.round(tick));
-
-  return { lower, upper, toY, ticks };
-}
-
-function toTemplateWorkout(template: Workout) {
+function getExerciseStats(exercise: ExerciseRecord) {
+  const entries = sortEntries(exercise.entries);
+  const maxWeight = entries.reduce((max, entry) => Math.max(max, entry.weight), 0);
+  const latestEntry = entries[entries.length - 1] ?? null;
+  const maxByEntry = entries.map((entry) => entry.weight);
   return {
-    id: uuidv4(),
-    date: new Date().toISOString(),
-    name: `${template.name || "Workout"} (Template)`,
-    contextTag: template.contextTag ?? "normal",
-    exercises: template.exercises.map((exercise) => ({
-      ...exercise,
-      id: uuidv4(),
-      sets: exercise.sets.map((set) => ({
-        ...set,
-        id: uuidv4(),
-        completed: false,
-      })),
-    })),
+    maxWeight,
+    latestEntry,
+    trend: getTrend(maxByEntry),
+    totalEntries: entries.length,
   };
 }
 
+function createExerciseDraft(): ExerciseDraft {
+  return {
+    weight: "",
+    reps: "",
+    tag: "",
+    note: "",
+    sessionId: uuidv4(),
+    pendingSets: [],
+  };
+}
+
+function buildChart(values: number[]) {
+  const safeMax = Math.max(...values, 1);
+  const upper = safeMax * 1.08;
+  const getY = (value: number) => 92 - (value / upper) * 76;
+  const ticks = [0, upper * 0.33, upper * 0.66, upper].map((tick) => Math.round(tick));
+  return { upper, getY, ticks };
+}
+
+function buildTimeScale(dates: string[]) {
+  const sortedTimes = dates
+    .map((date) => new Date(date).getTime())
+    .filter((time) => Number.isFinite(time))
+    .sort((a, b) => a - b);
+
+  const start = sortedTimes[0] ?? Date.now();
+  const last = sortedTimes[sortedTimes.length - 1] ?? start;
+  const end = Math.max(last + 14 * 24 * 60 * 60 * 1000, start + 14 * 24 * 60 * 60 * 1000);
+  const span = Math.max(end - start, 1);
+  const getX = (date: string) => 4 + (((new Date(date).getTime() - start) / span) * 92);
+  return { start, end, getX };
+}
+
+function summarizeReps(entries: LoggedSet[]) {
+  const counts = new Map<number, number>();
+  entries.forEach((entry) => {
+    counts.set(entry.reps, (counts.get(entry.reps) ?? 0) + 1);
+  });
+  return Array.from(counts.entries())
+    .sort((a, b) => b[0] - a[0])
+    .map(([reps, count]) => `${count}x${reps}`)
+    .join(", ");
+}
+
+function buildLinePath(points: Array<{ x: number; y: number }>) {
+  if (points.length === 0) return "";
+  return points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+}
+
+function buildAreaPath(points: Array<{ x: number; y: number }>) {
+  if (points.length === 0) return "";
+  const first = points[0];
+  const last = points[points.length - 1];
+  return `M ${first.x} 92 L ${first.x} ${first.y} ${points
+    .slice(1)
+    .map((point) => `L ${point.x} ${point.y}`)
+    .join(" ")} L ${last.x} 92 Z`;
+}
+
 function App() {
-  const [activeTab, setActiveTab] = useState<Tab>("dashboard");
+  const initialSnapshot = useMemo(() => loadLocalSnapshot(), []);
 
-  const [currentWorkout, setCurrentWorkout] = useState<Workout | null>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_CURRENT);
-    return saved ? JSON.parse(saved) : null;
-  });
-  const [history, setHistory] = useState<Workout[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_HISTORY);
-    if (!saved) return [];
-    return keepLastThirtyDays(JSON.parse(saved) as Workout[]);
-  });
-  const [units, setUnits] = useState<Units>(
-    () => (localStorage.getItem(STORAGE_KEY_UNITS) as Units | null) ?? "lbs",
+  const [activeTab, setActiveTab] = useState<Tab>("exercises");
+  const [exercises, setExercises] = useState<ExerciseRecord[]>(initialSnapshot.exercises);
+  const [favoriteExerciseKeys, setFavoriteExerciseKeys] = useState<string[]>(
+    initialSnapshot.favoriteExerciseKeys ?? [],
   );
-  const [joinDate] = useState<string>(() => {
-    const stored = localStorage.getItem(STORAGE_KEY_JOIN_DATE);
-    if (stored) return stored;
-    const now = new Date().toISOString();
-    localStorage.setItem(STORAGE_KEY_JOIN_DATE, now);
-    return now;
-  });
-
-  const [exerciseCatalog, setExerciseCatalog] = useState<string[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_EXERCISE_CATALOG);
-    if (!saved) return [];
-    return JSON.parse(saved) as string[];
-  });
-  const [backfillSessions, setBackfillSessions] = useState<BackfillSession[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_BACKFILL);
-    if (!saved) return [];
-    return JSON.parse(saved) as BackfillSession[];
-  });
-  const [dashboardOrder, setDashboardOrder] = useState<DashboardMetricId[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_DASH_ORDER);
-    if (!saved) return defaultDashboardOrder;
-    const parsed = JSON.parse(saved) as DashboardMetricId[];
-    const valid = parsed.filter((id) => defaultDashboardOrder.includes(id));
-    return valid;
-  });
-  const [trackedDashboardExercises, setTrackedDashboardExercises] = useState<string[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_DASH_TRACKED);
-    if (!saved) return [];
-    return JSON.parse(saved) as string[];
-  });
-  const [dashboardGoals, setDashboardGoals] = useState<Record<string, number>>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_DASH_GOALS);
-    if (!saved) return {};
-    return JSON.parse(saved) as Record<string, number>;
-  });
-  const [dashboardGoalDirection, setDashboardGoalDirection] = useState<Record<string, GoalDirection>>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_DASH_GOAL_DIRECTION);
-    if (!saved) return {};
-    return JSON.parse(saved) as Record<string, GoalDirection>;
-  });
-  const [dashboardPrefsUpdatedAt, setDashboardPrefsUpdatedAt] = useState<number>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_DASH_PREFS_UPDATED);
-    if (!saved) return 0;
-    const parsed = Number(saved);
-    return Number.isFinite(parsed) ? parsed : 0;
-  });
-  const [bodyweightLog, setBodyweightLog] = useState<BodyweightEntry[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_BODYWEIGHT_LOG);
-    if (!saved) return [];
-    return JSON.parse(saved) as BodyweightEntry[];
-  });
-  const [isDashboardManageOpen, setIsDashboardManageOpen] = useState(false);
-  const [isBodyweightDialogOpen, setIsBodyweightDialogOpen] = useState(false);
-  const [bodyweightDate, setBodyweightDate] = useState(toDateInputValue());
-  const [bodyweightValue, setBodyweightValue] = useState<number | "">("");
-  const [goalEditor, setGoalEditor] = useState<{
-    key: string;
-    label: string;
-    value: string;
-    direction: GoalDirection;
-    showDirection: boolean;
-  } | null>(null);
-
-  const [expandedExerciseId, setExpandedExerciseId] = useState<string | null>(null);
-  const [workoutName, setWorkoutName] = useState("");
-  const [isFinishDialogOpen, setIsFinishDialogOpen] = useState(false);
-  const [isAddSheetOpen, setIsAddSheetOpen] = useState(false);
-  const [isQuickStartOpen, setIsQuickStartOpen] = useState(false);
-  const [isTemplatePickerOpen, setIsTemplatePickerOpen] = useState(false);
-
-  const [newExerciseName, setNewExerciseName] = useState("");
-  const [newWeight, setNewWeight] = useState<number | "">("");
-  const [newReps, setNewReps] = useState<number | "">("");
-  const [isExercisePickerOpen, setIsExercisePickerOpen] = useState(false);
-  const [exerciseSearch, setExerciseSearch] = useState("");
-
+  const [favoritesUpdatedAt, setFavoritesUpdatedAt] = useState<number>(
+    initialSnapshot.favoritesUpdatedAt ?? 0,
+  );
+  const [units, setUnits] = useState<Units>(initialSnapshot.units);
+  const [joinDate] = useState<string>(initialSnapshot.joinDate);
   const [selectedExerciseKey, setSelectedExerciseKey] = useState<string | null>(null);
-  const [exerciseVizMode, setExerciseVizMode] = useState<VizMode>("set_map");
+  const [plotMode, setPlotMode] = useState<PlotMode>("max_weight");
+  const [hoveredSessionIndex, setHoveredSessionIndex] = useState<number | null>(null);
+  const [expandedDataGroups, setExpandedDataGroups] = useState<Record<string, boolean>>({});
 
-  const [isAddExerciseDialogOpen, setIsAddExerciseDialogOpen] = useState(false);
-  const [newCatalogExerciseName, setNewCatalogExerciseName] = useState("");
+  const [isAddExerciseOpen, setIsAddExerciseOpen] = useState(false);
+  const [newExerciseName, setNewExerciseName] = useState("");
+  const [exerciseDrafts, setExerciseDrafts] = useState<Record<string, ExerciseDraft>>({});
+  const [isHistoricalLogOpen, setIsHistoricalLogOpen] = useState(false);
+  const [historicalExerciseKey, setHistoricalExerciseKey] = useState<string | null>(null);
+  const [historicalDate, setHistoricalDate] = useState(() => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = `${now.getMonth() + 1}`.padStart(2, "0");
+    const day = `${now.getDate()}`.padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  });
+  const [historicalWeight, setHistoricalWeight] = useState("");
+  const [historicalReps, setHistoricalReps] = useState("");
 
-  const [isBackfillDialogOpen, setIsBackfillDialogOpen] = useState(false);
-  const [backfillExerciseName, setBackfillExerciseName] = useState("");
-  const [backfillDate, setBackfillDate] = useState(toDateInputValue());
-  const [backfillContextTag, setBackfillContextTag] = useState<SessionContext>("normal");
-  const [backfillSetsDraft, setBackfillSetsDraft] = useState<BackfillSet[]>([
-    { id: uuidv4(), weight: 0, reps: 0 },
-  ]);
-  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
-  const [sessionEditDraft, setSessionEditDraft] = useState<Array<{ id: string; weight: number; reps: number }>>(
-    [],
-  );
   const [cloudOptIn, setCloudOptIn] = useState<boolean>(
     () => localStorage.getItem(STORAGE_KEY_CLOUD_OPT_IN) === "true",
   );
@@ -421,52 +518,15 @@ function App() {
   const [didInitialCloudSync, setDidInitialCloudSync] = useState(false);
 
   useEffect(() => {
-    if (currentWorkout) {
-      localStorage.setItem(STORAGE_KEY_CURRENT, JSON.stringify(currentWorkout));
-    } else {
-      localStorage.removeItem(STORAGE_KEY_CURRENT);
-    }
-  }, [currentWorkout]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(history));
-  }, [history]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_UNITS, units);
-  }, [units]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_EXERCISE_CATALOG, JSON.stringify(exerciseCatalog));
-  }, [exerciseCatalog]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_BACKFILL, JSON.stringify(backfillSessions));
-  }, [backfillSessions]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_DASH_ORDER, JSON.stringify(dashboardOrder));
-  }, [dashboardOrder]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_DASH_TRACKED, JSON.stringify(trackedDashboardExercises));
-  }, [trackedDashboardExercises]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_DASH_GOALS, JSON.stringify(dashboardGoals));
-  }, [dashboardGoals]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_DASH_GOAL_DIRECTION, JSON.stringify(dashboardGoalDirection));
-  }, [dashboardGoalDirection]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_DASH_PREFS_UPDATED, `${dashboardPrefsUpdatedAt}`);
-  }, [dashboardPrefsUpdatedAt]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_BODYWEIGHT_LOG, JSON.stringify(bodyweightLog));
-  }, [bodyweightLog]);
+    const snapshot: AppSnapshot = {
+      exercises,
+      favoriteExerciseKeys,
+      favoritesUpdatedAt,
+      units,
+      joinDate,
+    };
+    localStorage.setItem(STORAGE_KEY_SNAPSHOT, JSON.stringify(snapshot));
+  }, [exercises, favoriteExerciseKeys, favoritesUpdatedAt, joinDate, units]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY_CLOUD_OPT_IN, cloudOptIn ? "true" : "false");
@@ -477,7 +537,7 @@ function App() {
   }, [cloudOptIn]);
 
   useEffect(() => {
-    if (!supabaseConfigured) return;
+    if (!supabaseConfigured || !supabase) return;
     supabase.auth.getSession().then(({ data }) => {
       setAuthUser(data.session?.user ?? null);
     });
@@ -492,650 +552,37 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  useEffect(() => {
-    if (!localStorage.getItem(STORAGE_KEY_JOIN_DATE)) {
-      localStorage.setItem(STORAGE_KEY_JOIN_DATE, joinDate);
-    }
-  }, [joinDate]);
-
-  const getLocalSnapshot = (): AppSnapshot => ({
-    currentWorkout,
-    history,
-    units,
-    exerciseCatalog,
-    backfillSessions,
-    dashboardOrder,
-    trackedDashboardExercises,
-    dashboardGoals,
-    dashboardGoalDirection,
-    dashboardPrefsUpdatedAt,
-    bodyweightLog,
-    joinDate,
-  });
+  const getLocalSnapshotValue = () =>
+    ({
+      exercises,
+      favoriteExerciseKeys,
+      favoritesUpdatedAt,
+      units,
+      joinDate,
+    }) satisfies AppSnapshot;
 
   const applySnapshot = (snapshot: AppSnapshot) => {
-    setCurrentWorkout(snapshot.currentWorkout);
-    setHistory(keepLastThirtyDays(snapshot.history));
+    setExercises(sortExercises(snapshot.exercises));
+    setFavoriteExerciseKeys(snapshot.favoriteExerciseKeys ?? []);
+    setFavoritesUpdatedAt(snapshot.favoritesUpdatedAt ?? 0);
     setUnits(snapshot.units);
-    setExerciseCatalog(snapshot.exerciseCatalog);
-    setBackfillSessions(snapshot.backfillSessions);
-    setDashboardOrder(normalizeDashboardOrder(snapshot.dashboardOrder));
-    setTrackedDashboardExercises(snapshot.trackedDashboardExercises);
-    setDashboardGoals(snapshot.dashboardGoals);
-    setDashboardGoalDirection(snapshot.dashboardGoalDirection ?? {});
-    setDashboardPrefsUpdatedAt(snapshot.dashboardPrefsUpdatedAt ?? 0);
-    setBodyweightLog(snapshot.bodyweightLog ?? []);
-  };
-
-  const normalizeDashboardOrder = (order: DashboardMetricId[]) => {
-    return order.filter((id) => defaultDashboardOrder.includes(id));
-  };
-
-  const mergeSnapshots = (local: AppSnapshot, cloud: AppSnapshot): AppSnapshot => {
-    const mergedHistoryMap = new Map<string, Workout>();
-    [...cloud.history, ...local.history].forEach((workout) => {
-      const existing = mergedHistoryMap.get(workout.id);
-      if (!existing) {
-        mergedHistoryMap.set(workout.id, workout);
-        return;
-      }
-      if (new Date(workout.date).getTime() > new Date(existing.date).getTime()) {
-        mergedHistoryMap.set(workout.id, workout);
-      }
-    });
-
-    const mergedBackfillMap = new Map<string, BackfillSession>();
-    [...cloud.backfillSessions, ...local.backfillSessions].forEach((session) => {
-      const existing = mergedBackfillMap.get(session.id);
-      if (!existing) {
-        mergedBackfillMap.set(session.id, session);
-        return;
-      }
-      if (new Date(session.date).getTime() > new Date(existing.date).getTime()) {
-        mergedBackfillMap.set(session.id, session);
-      }
-    });
-
-    const mergedCatalog = [...cloud.exerciseCatalog];
-    local.exerciseCatalog.forEach((name) => {
-      const normalized = normalizeExerciseName(name);
-      if (!mergedCatalog.some((item) => normalizeExerciseName(item) === normalized)) {
-        mergedCatalog.push(name);
-      }
-    });
-
-    const mergedBodyweightMap = new Map<string, BodyweightEntry>();
-    [...cloud.bodyweightLog, ...local.bodyweightLog].forEach((entry) => {
-      const existing = mergedBodyweightMap.get(entry.id);
-      if (!existing) {
-        mergedBodyweightMap.set(entry.id, entry);
-        return;
-      }
-      if (new Date(entry.date).getTime() > new Date(existing.date).getTime()) {
-        mergedBodyweightMap.set(entry.id, entry);
-      }
-    });
-
-    const localCurrentTime = local.currentWorkout ? new Date(local.currentWorkout.date).getTime() : 0;
-    const cloudCurrentTime = cloud.currentWorkout ? new Date(cloud.currentWorkout.date).getTime() : 0;
-    const currentWorkoutMerged =
-      localCurrentTime >= cloudCurrentTime ? local.currentWorkout : cloud.currentWorkout;
-
-    const localJoin = new Date(local.joinDate).getTime();
-    const cloudJoin = new Date(cloud.joinDate).getTime();
-    const preferLocalPrefs =
-      (local.dashboardPrefsUpdatedAt ?? 0) >= (cloud.dashboardPrefsUpdatedAt ?? 0);
-    const mergedDashboardOrder = preferLocalPrefs ? local.dashboardOrder : cloud.dashboardOrder;
-    const mergedTracked = preferLocalPrefs
-      ? local.trackedDashboardExercises
-      : cloud.trackedDashboardExercises;
-    const mergedGoals = preferLocalPrefs ? local.dashboardGoals : cloud.dashboardGoals;
-    const mergedGoalDirection = preferLocalPrefs
-      ? local.dashboardGoalDirection
-      : cloud.dashboardGoalDirection;
-    const mergedPrefsUpdatedAt = Math.max(
-      local.dashboardPrefsUpdatedAt ?? 0,
-      cloud.dashboardPrefsUpdatedAt ?? 0,
-    );
-
-    return {
-      currentWorkout: currentWorkoutMerged,
-      history: keepLastThirtyDays(
-        Array.from(mergedHistoryMap.values()).sort(
-          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-        ),
-      ),
-      units: local.units ?? cloud.units,
-      exerciseCatalog: mergedCatalog,
-      backfillSessions: Array.from(mergedBackfillMap.values()).sort(
-        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-      ),
-      dashboardOrder: normalizeDashboardOrder(
-        mergedDashboardOrder,
-      ),
-      trackedDashboardExercises: mergedTracked,
-      dashboardGoals: mergedGoals,
-      dashboardGoalDirection: mergedGoalDirection,
-      dashboardPrefsUpdatedAt: mergedPrefsUpdatedAt,
-      bodyweightLog: Array.from(mergedBodyweightMap.values()).sort(
-        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-      ),
-      joinDate: localJoin < cloudJoin ? local.joinDate : cloud.joinDate,
-    };
-  };
-
-  const workoutBasedSessions = useMemo(() => {
-    const workouts = [...history, ...(currentWorkout ? [currentWorkout] : [])].sort(
-      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-    );
-
-    const sessions: BackfillSession[] = [];
-    workouts.forEach((workout) => {
-      workout.exercises.forEach((exercise) => {
-        if (exercise.sets.length === 0) return;
-        sessions.push({
-          id: `${workout.id}::${exercise.id}`,
-          exerciseName: exercise.name,
-          date: workout.date,
-          contextTag: workout.contextTag,
-          sets: exercise.sets.map((set) => ({
-            id: set.id,
-            weight: set.weight,
-            reps: set.reps,
-          })),
-        });
-      });
-    });
-
-    return sessions;
-  }, [currentWorkout, history]);
-
-  const trackedExercises = useMemo<TrackedExercise[]>(() => {
-    const grouped = new Map<string, TrackedExercise>();
-    const combinedSessions = [
-      ...workoutBasedSessions.map((session) => ({
-        ...session,
-        source: {
-          kind: "workout" as const,
-          workoutId: session.id.split("::")[0] ?? "",
-          exerciseId: session.id.split("::")[1] ?? "",
-        },
-      })),
-      ...backfillSessions.map((session) => ({
-        ...session,
-        source: { kind: "backfill" as const, backfillId: session.id },
-      })),
-    ].sort(
-      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-    );
-
-    combinedSessions.forEach((session) => {
-      const key = normalizeExerciseName(session.exerciseName);
-      if (!key) return;
-
-      const cleanedSets = session.sets.filter((set) => set.weight > 0 && set.reps > 0);
-      if (cleanedSets.length === 0) return;
-
-      const topSet = cleanedSets.reduce((best, current) => {
-        const bestScore = estimateSessionScore(best.weight, best.reps);
-        const currentScore = estimateSessionScore(current.weight, current.reps);
-        return currentScore > bestScore ? current : best;
-      }, cleanedSets[0]);
-
-      const adjustedScore =
-        cleanedSets.reduce((sum, set) => sum + estimateSessionScore(set.weight, set.reps), 0) /
-        cleanedSets.length;
-      const volume = cleanedSets.reduce((sum, set) => sum + set.weight * set.reps, 0);
-
-      const point: ExerciseSessionPoint = {
-        id: session.id,
-        date: session.date,
-        label: formatShortDate(session.date),
-        sets: cleanedSets.map((set) => ({ id: set.id, weight: set.weight, reps: set.reps })),
-        topSet: { weight: topSet.weight, reps: topSet.reps },
-        est1RM: estimate1RM(topSet.weight, topSet.reps),
-        adjustedScore,
-        volume,
-        contextTag: session.contextTag,
-        source: session.source,
-      };
-
-      const existing = grouped.get(key);
-      if (!existing) {
-        grouped.set(key, {
-          key,
-          name: session.exerciseName.trim(),
-          sessions: [point],
-          totalSets: cleanedSets.length,
-          totalAdjustedLoad: point.adjustedScore,
-          est1RM: Math.round(point.est1RM),
-          workingSet: `${topSet.weight} x ${topSet.reps}`,
-          trend: "flat",
-          state: "normal",
-          confidence: "low",
-          nextTarget: "Add a baseline session",
-        });
-        return;
-      }
-
-      existing.sessions.push(point);
-      existing.totalSets += cleanedSets.length;
-      existing.totalAdjustedLoad += point.adjustedScore;
-    });
-
-    exerciseCatalog.forEach((exerciseName) => {
-      const key = normalizeExerciseName(exerciseName);
-      if (!key || grouped.has(key)) return;
-      grouped.set(key, {
-        key,
-        name: exerciseName,
-        sessions: [],
-        totalSets: 0,
-        totalAdjustedLoad: 0,
-        est1RM: 0,
-        workingSet: "No data",
-        trend: "flat",
-        state: "normal",
-        confidence: "low",
-        nextTarget: "Add a baseline session",
-      });
-    });
-
-    commonExercises.forEach((exerciseName) => {
-      const key = normalizeExerciseName(exerciseName);
-      if (!key || grouped.has(key)) return;
-      grouped.set(key, {
-        key,
-        name: exerciseName,
-        sessions: [],
-        totalSets: 0,
-        totalAdjustedLoad: 0,
-        est1RM: 0,
-        workingSet: "No data",
-        trend: "flat",
-        state: "normal",
-        confidence: "low",
-        nextTarget: "Add a baseline session",
-      });
-    });
-
-    return Array.from(grouped.values())
-      .map((exercise) => {
-        if (exercise.sessions.length === 0) return exercise;
-        const sessions = [...exercise.sessions].sort(
-          (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-        );
-        const latest = sessions[sessions.length - 1];
-        const derivedTrend = getTrend(sessions.map((session) => session.adjustedScore));
-        const confidence = getConfidence(sessions.length);
-
-        return {
-          ...exercise,
-          sessions,
-          est1RM: Math.round(latest.est1RM),
-          workingSet: `${latest.topSet.weight} x ${latest.topSet.reps}`,
-          trend: confidence === "low" ? "flat" : derivedTrend,
-          state: classifyExerciseState(sessions.map((session) => session.adjustedScore)),
-          confidence,
-          nextTarget: getNextTarget(latest.topSet, derivedTrend, units),
-        };
-      })
-      .sort((a, b) => {
-        if (b.totalAdjustedLoad !== a.totalAdjustedLoad) {
-          return b.totalAdjustedLoad - a.totalAdjustedLoad;
-        }
-        return a.name.localeCompare(b.name);
-      });
-  }, [backfillSessions, exerciseCatalog, units, workoutBasedSessions]);
-
-  const trackedByKey = useMemo(
-    () => new Map(trackedExercises.map((exercise) => [exercise.key, exercise])),
-    [trackedExercises],
-  );
-
-  const workoutsTabHistory = useMemo(() => {
-    const groupedBackfills = new Map<string, BackfillSession[]>();
-    backfillSessions.forEach((session) => {
-      const dayKey = getDayKey(session.date);
-      const bucket = groupedBackfills.get(dayKey) ?? [];
-      bucket.push(session);
-      groupedBackfills.set(dayKey, bucket);
-    });
-
-    const syntheticFromBackfills: Workout[] = Array.from(groupedBackfills.entries()).map(
-      ([dayKey, sessions]) => ({
-        id: `backfill-day-${dayKey}`,
-        date: `${dayKey}T12:00:00.000Z`,
-        name: `Backfilled Workout`,
-        contextTag: "normal",
-        exercises: sessions.map((session, index) => ({
-          id: `backfill-ex-${session.id}-${index}`,
-          name: session.exerciseName,
-          sets: session.sets.map((set, setIndex) => ({
-            id: `backfill-set-${set.id}-${setIndex}`,
-            weight: set.weight,
-            reps: set.reps,
-            completed: true,
-          })),
-        })),
-      }),
-    );
-
-    return [...history, ...syntheticFromBackfills].sort(
-      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-    );
-  }, [backfillSessions, history]);
-
-  const selectedExercise = selectedExerciseKey ? trackedByKey.get(selectedExerciseKey) : undefined;
-
-  const dashboardMetrics = useMemo<DashboardMetric[]>(() => {
-    const now = new Date();
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const fiveWeeksAgo = new Date(now.getTime() - 35 * 24 * 60 * 60 * 1000);
-
-    const weeklySessions = history.filter(
-      (workout) => new Date(workout.date).getTime() >= sevenDaysAgo.getTime(),
-    ).length;
-
-    const benchmark = trackedExercises.find(
-      (exercise) => exercise.key === "bench press" || exercise.sessions.length > 0,
-    );
-
-    const recentPatternExercises = trackedExercises.filter((exercise) =>
-      exercise.sessions.some((session) => new Date(session.date).getTime() >= fiveWeeksAgo.getTime()),
-    );
-
-    const patternKeywords: Record<string, string[]> = {
-      squat: ["squat", "leg press", "goblet"],
-      hinge: ["deadlift", "romanian", "rdl", "hip"],
-      push: ["bench", "press", "dip", "tricep"],
-      pull: ["row", "pull", "lat", "curl"],
-      lunge: ["lunge", "split squat"],
-      shoulder: ["overhead", "lateral", "face pull", "arnold"],
-    };
-
-    const hitPatterns = Object.values(patternKeywords).filter((keywords) =>
-      recentPatternExercises.some((exercise) =>
-        keywords.some((keyword) => exercise.key.includes(keyword)),
-      ),
-    ).length;
-
-    const sortedBodyweight = [...bodyweightLog].sort(
-      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-    );
-    const latestBodyweight = sortedBodyweight[sortedBodyweight.length - 1];
-    const priorBodyweight = sortedBodyweight[sortedBodyweight.length - 2];
-    const bodyweightGoal = dashboardGoals.bodyweight_trend;
-    const bodyweightDirection = dashboardGoalDirection.bodyweight_trend ?? "decrease";
-    let bodyweightTrend: Trend = "flat";
-    if (priorBodyweight && latestBodyweight) {
-      if (Number.isFinite(bodyweightGoal) && bodyweightGoal > 0) {
-        const previousDistance = Math.abs(priorBodyweight.value - bodyweightGoal);
-        const latestDistance = Math.abs(latestBodyweight.value - bodyweightGoal);
-        if (latestDistance < previousDistance) bodyweightTrend = "up";
-        if (latestDistance > previousDistance) bodyweightTrend = "down";
-      } else {
-        const delta = latestBodyweight.value - priorBodyweight.value;
-        if (bodyweightDirection === "decrease") {
-          if (delta < 0) bodyweightTrend = "up";
-          if (delta > 0) bodyweightTrend = "down";
-        } else {
-          if (delta > 0) bodyweightTrend = "up";
-          if (delta < 0) bodyweightTrend = "down";
-        }
-      }
-    }
-
-    return [
-      {
-        id: "weekly_consistency",
-        title: "Weekly Sessions",
-        value: `${weeklySessions}/5 this week`,
-        trend: weeklySessions >= 4 ? "up" : weeklySessions >= 3 ? "flat" : "down",
-        goalUnit: "sessions",
-      },
-      {
-        id: "key_lift_progress",
-        title: benchmark ? `${benchmark.name} Progress` : "Key Lift Progress",
-        value: benchmark ? `${benchmark.workingSet} • ${benchmark.est1RM} est` : "225 x 8 • 285 est",
-        trend: benchmark ? benchmark.trend : "up",
-        goalUnit: `est 1RM (${units})`,
-      },
-      {
-        id: "bodyweight_trend",
-        title: "Bodyweight Trend",
-        value: latestBodyweight ? `${latestBodyweight.value.toFixed(1)} ${units}` : "No data",
-        trend: bodyweightTrend,
-        goalUnit: units,
-      },
-      {
-        id: "movement_balance",
-        title: "Movement Balance",
-        value: `${hitPatterns}/6 patterns hit`,
-        trend: hitPatterns >= 5 ? "up" : hitPatterns >= 4 ? "flat" : "down",
-        goalUnit: "patterns",
-      },
-    ];
-  }, [bodyweightLog, dashboardGoalDirection, dashboardGoals, history, trackedExercises, units]);
-
-  const orderedDashboardMetrics = useMemo(() => {
-    const metricMap = new Map(dashboardMetrics.map((metric) => [metric.id, metric]));
-    return dashboardOrder
-      .map((id) => metricMap.get(id))
-      .filter((metric): metric is DashboardMetric => Boolean(metric));
-  }, [dashboardMetrics, dashboardOrder]);
-
-  const dashboardTrackedExercises = useMemo(
-    () =>
-      trackedDashboardExercises
-        .map((key) => trackedByKey.get(key))
-        .filter((exercise): exercise is TrackedExercise => Boolean(exercise)),
-    [trackedByKey, trackedDashboardExercises],
-  );
-
-  const markDashboardPrefsEdited = () => {
-    setDashboardPrefsUpdatedAt(Date.now());
-  };
-
-  const moveMetricByDirection = (metricId: DashboardMetricId, direction: "up" | "down") => {
-    setDashboardOrder((prev) => {
-      const fromIndex = prev.indexOf(metricId);
-      if (fromIndex < 0) return prev;
-      const toIndex = direction === "up" ? fromIndex - 1 : fromIndex + 1;
-      if (toIndex < 0 || toIndex >= prev.length) return prev;
-      triggerHaptic();
-      markDashboardPrefsEdited();
-      return moveItem(prev, fromIndex, toIndex);
-    });
-  };
-
-  const toggleSystemMetric = (metricId: DashboardMetricId) => {
-    setDashboardOrder((prev) => {
-      triggerHaptic();
-      markDashboardPrefsEdited();
-      if (prev.includes(metricId)) return prev.filter((id) => id !== metricId);
-      return [...prev, metricId];
-    });
-  };
-
-  const toggleTrackedExercise = (exerciseKey: string) => {
-    setTrackedDashboardExercises((prev) => {
-      triggerHaptic();
-      markDashboardPrefsEdited();
-      if (prev.includes(exerciseKey)) return prev.filter((key) => key !== exerciseKey);
-      return [...prev, exerciseKey];
-    });
-  };
-
-  const openGoalEditor = (key: string, label: string) => {
-    const showDirection = key === "bodyweight_trend";
-    setGoalEditor({
-      key,
-      label,
-      value: dashboardGoals[key] ? `${dashboardGoals[key]}` : "",
-      direction: dashboardGoalDirection[key] ?? (showDirection ? "decrease" : "increase"),
-      showDirection,
-    });
-  };
-
-  const saveGoal = () => {
-    if (!goalEditor) return;
-    const parsed = Number(goalEditor.value);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      setDashboardGoals((prev) => {
-        const next = { ...prev };
-        delete next[goalEditor.key];
-        return next;
-      });
-      setDashboardGoalDirection((prev) => {
-        const next = { ...prev };
-        delete next[goalEditor.key];
-        return next;
-      });
-      markDashboardPrefsEdited();
-      triggerHaptic();
-      setGoalEditor(null);
-      return;
-    }
-    markDashboardPrefsEdited();
-    setDashboardGoals((prev) => ({ ...prev, [goalEditor.key]: parsed }));
-    if (goalEditor.showDirection) {
-      setDashboardGoalDirection((prev) => ({ ...prev, [goalEditor.key]: goalEditor.direction }));
-    }
-    triggerHaptic();
-    setGoalEditor(null);
-  };
-
-  const nudgeGoal = (amount: number, mode: "add" | "pct") => {
-    setGoalEditor((prev) => {
-      if (!prev) return prev;
-      const current = Number(prev.value) || 0;
-      const next = mode === "add" ? current + amount : current + current * (amount / 100);
-      triggerHaptic();
-      return { ...prev, value: `${Math.max(0, Number(next.toFixed(2)))}` };
-    });
-  };
-
-  const renderTrendIcon = (trend: Trend, className?: string) => {
-    if (trend === "up") {
-      return (
-        <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400">
-          <TrendingUp className={className ?? "h-4 w-4"} />
-        </span>
-      );
-    }
-    if (trend === "down") {
-      return (
-        <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-red-500/20 text-red-400">
-          <TrendingDown className={className ?? "h-4 w-4"} />
-        </span>
-      );
-    }
-    return (
-      <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-yellow-500/20 text-yellow-300">
-        <Minus className={className ?? "h-4 w-4"} />
-      </span>
-    );
-  };
-
-  const openBackfillDialog = (exerciseName: string) => {
-    setBackfillExerciseName(exerciseName);
-    setBackfillDate(toDateInputValue());
-    setBackfillContextTag("normal");
-    setBackfillSetsDraft([{ id: uuidv4(), weight: 0, reps: 0 }]);
-    setIsBackfillDialogOpen(true);
-  };
-
-  const openBodyweightDialog = () => {
-    const latest = [...bodyweightLog].sort(
-      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-    )[bodyweightLog.length - 1];
-    setBodyweightDate(toDateInputValue());
-    setBodyweightValue(latest?.value ?? "");
-    setIsBodyweightDialogOpen(true);
-  };
-
-  const saveBodyweightEntry = () => {
-    const value = Number(bodyweightValue);
-    if (!Number.isFinite(value) || value <= 0) return;
-    const dateIso = bodyweightDate
-      ? new Date(`${bodyweightDate}T12:00:00`).toISOString()
-      : new Date().toISOString();
-    setBodyweightLog((prev) =>
-      [...prev, { id: uuidv4(), date: dateIso, value }].sort(
-        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-      ),
-    );
-    setIsBodyweightDialogOpen(false);
-    triggerHaptic();
-  };
-
-  const openExerciseDetail = (exerciseKey: string) => {
-    setSelectedExerciseKey(exerciseKey);
-    setExerciseVizMode("set_map");
-  };
-
-  const navigateToTab = (tab: Tab) => {
-    setActiveTab(tab);
-    if (tab === "exercises") {
-      setSelectedExerciseKey(null);
-      setEditingSessionId(null);
-      return;
-    }
-    setSelectedExerciseKey(null);
-    setEditingSessionId(null);
-  };
-
-  const changeExerciseVizMode = (mode: VizMode) => {
-    setExerciseVizMode(mode);
   };
 
   const loadCloudSnapshot = async (userId: string) => {
+    if (!supabase) return null;
     const { data, error } = await supabase
       .from("user_state")
-      .select("payload,updated_at")
+      .select("payload")
       .eq("user_id", userId)
       .maybeSingle();
 
     if (error) throw error;
     if (!data?.payload) return null;
-    const payload = data.payload as Partial<AppSnapshot>;
-    return {
-      currentWorkout: payload.currentWorkout ?? null,
-      history: Array.isArray(payload.history) ? (payload.history as Workout[]) : [],
-      units: payload.units === "kg" ? "kg" : "lbs",
-      exerciseCatalog: Array.isArray(payload.exerciseCatalog) ? payload.exerciseCatalog : [],
-      backfillSessions: Array.isArray(payload.backfillSessions) ? payload.backfillSessions : [],
-      dashboardOrder: normalizeDashboardOrder(
-        Array.isArray(payload.dashboardOrder)
-          ? (payload.dashboardOrder as DashboardMetricId[])
-          : defaultDashboardOrder,
-      ),
-      trackedDashboardExercises: Array.isArray(payload.trackedDashboardExercises)
-        ? payload.trackedDashboardExercises
-        : [],
-      dashboardGoals:
-        payload.dashboardGoals && typeof payload.dashboardGoals === "object"
-          ? (payload.dashboardGoals as Record<string, number>)
-          : {},
-      dashboardGoalDirection:
-        payload.dashboardGoalDirection && typeof payload.dashboardGoalDirection === "object"
-          ? (payload.dashboardGoalDirection as Record<string, GoalDirection>)
-          : {},
-      dashboardPrefsUpdatedAt:
-        typeof payload.dashboardPrefsUpdatedAt === "number"
-          ? payload.dashboardPrefsUpdatedAt
-          : data.updated_at
-            ? new Date(data.updated_at).getTime()
-            : 0,
-      bodyweightLog: Array.isArray(payload.bodyweightLog)
-        ? (payload.bodyweightLog as BodyweightEntry[])
-        : [],
-      joinDate: typeof payload.joinDate === "string" ? payload.joinDate : new Date().toISOString(),
-    } satisfies AppSnapshot;
+    return toSnapshot(data.payload);
   };
 
   const saveCloudSnapshot = async (userId: string, snapshot: AppSnapshot) => {
+    if (!supabase) return;
     const { error } = await supabase.from("user_state").upsert(
       {
         user_id: userId,
@@ -1151,7 +598,7 @@ function App() {
     setIsSyncingCloud(true);
     setAuthMessage("Syncing...");
     try {
-      const local = getLocalSnapshot();
+      const local = getLocalSnapshotValue();
       const cloud = (await loadCloudSnapshot(authUser.id)) ?? local;
       const merged = mergeSnapshots(local, cloud);
       applySnapshot(merged);
@@ -1159,14 +606,42 @@ function App() {
       setAuthMessage("Cloud sync complete.");
       setDidInitialCloudSync(true);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Cloud sync failed.";
-      setAuthMessage(message);
+      setAuthMessage(error instanceof Error ? error.message : "Cloud sync failed.");
     } finally {
       setIsSyncingCloud(false);
     }
   };
 
+  useEffect(() => {
+    if (!cloudOptIn || !authUser || !supabaseConfigured || didInitialCloudSync) return;
+    void syncCloudNow();
+  }, [authUser, cloudOptIn, didInitialCloudSync]);
+
+  useEffect(() => {
+    if (!cloudOptIn || !authUser || !supabaseConfigured || !didInitialCloudSync || isSyncingCloud) return;
+    const timeoutId = window.setTimeout(() => {
+      void saveCloudSnapshot(authUser.id, getLocalSnapshotValue()).catch(() => {
+        setAuthMessage("Auto-sync failed. Tap Sync Now.");
+      });
+    }, 500);
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    authUser,
+    cloudOptIn,
+    didInitialCloudSync,
+    exercises,
+    favoriteExerciseKeys,
+    favoritesUpdatedAt,
+    isSyncingCloud,
+    joinDate,
+    units,
+  ]);
+
   const signUpWithEmail = async () => {
+    if (!supabase) {
+      setAuthMessage("Supabase is not configured for this environment.");
+      return;
+    }
     if (!authEmail.trim() || !authPassword.trim()) {
       setAuthMessage("Enter email and password first.");
       return;
@@ -1174,34 +649,26 @@ function App() {
     setIsAuthLoading(true);
     setAuthMessage("");
     try {
-      const primaryAttempt = await supabase.auth.signUp({
+      const result = await supabase.auth.signUp({
         email: authEmail.trim(),
         password: authPassword,
         options: { emailRedirectTo: window.location.origin },
       });
-      if (primaryAttempt.error) {
-        const fallbackAttempt = await supabase.auth.signUp({
-          email: authEmail.trim(),
-          password: authPassword,
-        });
-        if (fallbackAttempt.error) throw fallbackAttempt.error;
-        setAuthMessage(
-          "Check your email to verify your account. Redirect URL wasn&apos;t configured, but signup succeeded.",
-        );
-        setNeedsEmailVerification(true);
-        return;
-      }
-      setAuthMessage("Check your email to verify your account, then log in.");
+      if (result.error) throw result.error;
       setNeedsEmailVerification(true);
+      setAuthMessage("Check your email to verify your account, then log in.");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Sign up failed.";
-      setAuthMessage(message);
+      setAuthMessage(error instanceof Error ? error.message : "Sign up failed.");
     } finally {
       setIsAuthLoading(false);
     }
   };
 
   const signInWithEmail = async () => {
+    if (!supabase) {
+      setAuthMessage("Supabase is not configured for this environment.");
+      return;
+    }
     if (!authEmail.trim() || !authPassword.trim()) {
       setAuthMessage("Enter email and password first.");
       return;
@@ -1218,8 +685,7 @@ function App() {
       setNeedsEmailVerification(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Login failed.";
-      const normalized = message.toLowerCase();
-      if (normalized.includes("email not confirmed") || normalized.includes("not confirmed")) {
+      if (message.toLowerCase().includes("not confirmed")) {
         setNeedsEmailVerification(true);
         setAuthMessage("Verify your email first, then log in.");
       } else {
@@ -1231,931 +697,887 @@ function App() {
   };
 
   const resendVerificationEmail = async () => {
+    if (!supabase) {
+      setAuthMessage("Supabase is not configured for this environment.");
+      return;
+    }
     if (!authEmail.trim()) {
-      setAuthMessage("Enter your email, then tap resend.");
+      setAuthMessage("Enter your email first.");
       return;
     }
     setIsAuthLoading(true);
     setAuthMessage("");
     try {
-      const attempt = await supabase.auth.resend({
+      const { error } = await supabase.auth.resend({
         type: "signup",
         email: authEmail.trim(),
         options: { emailRedirectTo: window.location.origin },
       });
-      if (attempt.error) {
-        const fallback = await supabase.auth.resend({
-          type: "signup",
-          email: authEmail.trim(),
-        });
-        if (fallback.error) throw fallback.error;
-      }
-      setAuthMessage("Verification email sent. Check inbox/spam, then log in.");
+      if (error) throw error;
+      setAuthMessage("Verification email sent.");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to resend email.";
-      setAuthMessage(message);
+      setAuthMessage(error instanceof Error ? error.message : "Unable to resend email.");
     } finally {
       setIsAuthLoading(false);
     }
   };
 
   const signOut = async () => {
+    if (!supabase) return;
     await supabase.auth.signOut();
     setAuthMessage("Signed out. Local data remains on this device.");
   };
 
-  useEffect(() => {
-    if (!cloudOptIn || !authUser || !supabaseConfigured || didInitialCloudSync) return;
-    void syncCloudNow();
-  }, [authUser, cloudOptIn, didInitialCloudSync]);
+  const getDraft = (exerciseKey: string) => exerciseDrafts[exerciseKey] ?? createExerciseDraft();
 
-  useEffect(() => {
-    if (!cloudOptIn || !authUser || !supabaseConfigured || !didInitialCloudSync || isSyncingCloud) return;
-    const timeoutId = window.setTimeout(() => {
-      void saveCloudSnapshot(authUser.id, getLocalSnapshot()).catch(() => {
-        setAuthMessage("Auto-sync failed. Tap Sync Now.");
-      });
-    }, 500);
-    return () => window.clearTimeout(timeoutId);
-  }, [
-    authUser,
-    cloudOptIn,
-    currentWorkout,
-    dashboardGoalDirection,
-    dashboardGoals,
-    dashboardOrder,
-    dashboardPrefsUpdatedAt,
-    didInitialCloudSync,
-    exerciseCatalog,
-    history,
-    isSyncingCloud,
-    backfillSessions,
-    bodyweightLog,
-    trackedDashboardExercises,
-    units,
-  ]);
-
-  const startWorkout = (template?: Workout) => {
-    const newWorkout = template
-      ? toTemplateWorkout(template)
-      : {
-          id: uuidv4(),
-          date: new Date().toISOString(),
-          name: `Workout ${new Date().toLocaleDateString()}`,
-          exercises: [],
-          contextTag: "normal" as SessionContext,
-        };
-
-    setCurrentWorkout(newWorkout);
-    setExpandedExerciseId(newWorkout.exercises[0]?.id ?? null);
-    setActiveTab("workouts");
-    setIsQuickStartOpen(false);
-    setIsTemplatePickerOpen(false);
-  };
-
-  const continueWorkout = () => {
-    setActiveTab("workouts");
-    setIsQuickStartOpen(false);
-  };
-
-  const setCurrentWorkoutContextTag = (tag: SessionContext) => {
-    setCurrentWorkout((prev) => (prev ? { ...prev, contextTag: tag } : prev));
-  };
-
-  const addExerciseToWorkout = () => {
-    if (!currentWorkout || !newExerciseName.trim() || !newWeight || !newReps) return;
-
-    const newSet: Set = {
-      id: uuidv4(),
-      weight: Number(newWeight),
-      reps: Number(newReps),
-      completed: false,
-    };
-
-    const newExercise: Exercise = {
-      id: uuidv4(),
-      name: newExerciseName.trim(),
-      sets: [newSet],
-    };
-
-    setCurrentWorkout((prev) =>
-      prev ? { ...prev, exercises: [...prev.exercises, newExercise] } : prev,
-    );
-
-    const normalized = normalizeExerciseName(newExercise.name);
-    setExerciseCatalog((prev) => {
-      if (prev.some((item) => normalizeExerciseName(item) === normalized)) return prev;
-      return [...prev, newExercise.name];
-    });
-
-    setNewExerciseName("");
-    setNewWeight("");
-    setNewReps("");
-    setExerciseSearch("");
-    setIsExercisePickerOpen(false);
-    setIsAddSheetOpen(false);
-    setExpandedExerciseId(newExercise.id);
-  };
-
-  const updateSet = (
-    exerciseId: string,
-    setIndex: number,
-    field: "weight" | "reps",
-    newValue: number,
+  const setDraftValue = (
+    exerciseKey: string,
+    field: "weight" | "reps" | "tag" | "note",
+    value: string,
   ) => {
-    if (!currentWorkout) return;
+    setExerciseDrafts((prev) => ({
+      ...prev,
+      [exerciseKey]: {
+        ...(prev[exerciseKey] ?? createExerciseDraft()),
+        [field]: value,
+      },
+    }));
+  };
 
-    setCurrentWorkout((prev) => {
-      if (!prev) return prev;
+  const addExercise = () => {
+    const cleanName = newExerciseName.trim();
+    if (!cleanName) return;
+    const key = normalizeExerciseName(cleanName);
+    const exists = exercises.find((exercise) => exercise.key === key);
+    if (exists) {
+      setSelectedExerciseKey(exists.key);
+      setPlotMode("max_weight");
+      setIsAddExerciseOpen(false);
+      setNewExerciseName("");
+      return;
+    }
+
+    const created: ExerciseRecord = {
+      id: uuidv4(),
+      key,
+      name: cleanName,
+      entries: [],
+    };
+
+    setExercises((prev) => sortExercises([created, ...prev]));
+    setSelectedExerciseKey(created.key);
+    setPlotMode("max_weight");
+    setIsAddExerciseOpen(false);
+    setNewExerciseName("");
+    triggerHaptic();
+  };
+
+  const queueSet = (exerciseKey: string, seed?: Partial<ExerciseDraft>) => {
+    const draft = {
+      ...getDraft(exerciseKey),
+      ...(seed ?? {}),
+    };
+    const weight = Number(draft?.weight);
+    const reps = Number(draft?.reps);
+    if (!Number.isFinite(weight) || !Number.isFinite(reps) || weight <= 0 || reps <= 0) return;
+
+    setExerciseDrafts((prev) => ({
+      ...prev,
+      [exerciseKey]: {
+        ...draft,
+        weight: "",
+        reps: "",
+        pendingSets: [
+          ...draft.pendingSets,
+          {
+            id: uuidv4(),
+            createdAt: new Date().toISOString(),
+            weight,
+            reps,
+            tag: draft.tag || undefined,
+            note: draft.note.trim() || undefined,
+          },
+        ],
+      },
+    }));
+    triggerHaptic();
+  };
+
+  const removePendingSet = (exerciseKey: string, pendingSetId: string) => {
+    setExerciseDrafts((prev) => {
+      const draft = prev[exerciseKey];
+      if (!draft) return prev;
       return {
         ...prev,
-        exercises: prev.exercises.map((exercise) =>
-          exercise.id === exerciseId
+        [exerciseKey]: {
+          ...draft,
+          pendingSets: draft.pendingSets.filter((set) => set.id !== pendingSetId),
+        },
+      };
+    });
+    triggerHaptic();
+  };
+
+  const clearSessionDraft = (exerciseKey: string) => {
+    setExerciseDrafts((prev) => ({
+      ...prev,
+      [exerciseKey]: createExerciseDraft(),
+    }));
+    triggerHaptic();
+  };
+
+  const saveSessionDraft = (exerciseKey: string) => {
+    const draft = getDraft(exerciseKey);
+    if (draft.pendingSets.length === 0) return;
+    const sessionId = draft.sessionId;
+
+    setExercises((prev) =>
+      sortExercises(
+        prev.map((exercise) =>
+          exercise.key === exerciseKey
             ? {
                 ...exercise,
-                sets: exercise.sets.map((set, index) =>
-                  index === setIndex ? { ...set, [field]: newValue } : set,
+                entries: sortEntries([
+                  ...exercise.entries,
+                  ...draft.pendingSets.map((set) => ({
+                    id: set.id,
+                    date: set.createdAt,
+                    weight: set.weight,
+                    reps: set.reps,
+                    sessionId,
+                    tag: set.tag,
+                    note: set.note,
+                  })),
+                ]),
+              }
+            : exercise,
+        ),
+      ),
+    );
+
+    setExerciseDrafts((prev) => ({
+      ...prev,
+      [exerciseKey]: {
+        ...createExerciseDraft(),
+        tag: draft.tag,
+      },
+    }));
+    triggerHaptic();
+  };
+
+  const logSetDirect = (exerciseKey: string) => {
+    const draft = getDraft(exerciseKey);
+    const weight = Number(draft.weight);
+    const reps = Number(draft.reps);
+    if (!Number.isFinite(weight) || !Number.isFinite(reps) || weight <= 0 || reps <= 0) return;
+
+    setExercises((prev) =>
+      sortExercises(
+        prev.map((exercise) =>
+          exercise.key === exerciseKey
+            ? {
+                ...exercise,
+                entries: sortEntries([
+                  ...exercise.entries,
+                  {
+                    id: uuidv4(),
+                    date: new Date().toISOString(),
+                    weight,
+                    reps,
+                  },
+                ]),
+              }
+            : exercise,
+        ),
+      ),
+    );
+
+    setExerciseDrafts((prev) => ({
+      ...prev,
+      [exerciseKey]: {
+        ...createExerciseDraft(),
+      },
+    }));
+    triggerHaptic();
+  };
+
+  const toggleFavorite = (exerciseKey: string) => {
+    setFavoriteExerciseKeys((prev) =>
+      prev.includes(exerciseKey) ? prev.filter((item) => item !== exerciseKey) : [exerciseKey, ...prev],
+    );
+    setFavoritesUpdatedAt(Date.now());
+    triggerHaptic();
+  };
+
+  const deleteEntry = (exerciseKey: string, entryId: string) => {
+    setExercises((prev) =>
+      sortExercises(
+        prev.map((exercise) =>
+          exercise.key === exerciseKey
+            ? {
+                ...exercise,
+                entries: exercise.entries.filter((entry) => entry.id !== entryId),
+              }
+            : exercise,
+        ),
+      ),
+    );
+    triggerHaptic();
+  };
+
+  const updateEntry = (
+    exerciseKey: string,
+    entryId: string,
+    field: "weight" | "reps",
+    value: number,
+  ) => {
+    if (!Number.isFinite(value) || value <= 0) return;
+    setExercises((prev) =>
+      sortExercises(
+        prev.map((exercise) =>
+          exercise.key === exerciseKey
+            ? {
+                ...exercise,
+                entries: sortEntries(
+                  exercise.entries.map((entry) =>
+                    entry.id === entryId ? { ...entry, [field]: value } : entry,
+                  ),
                 ),
               }
             : exercise,
         ),
-      };
-    });
+      ),
+    );
   };
 
-  const deleteSet = (exerciseId: string, setIndex: number) => {
-    if (!currentWorkout) return;
-
-    setCurrentWorkout((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        exercises: prev.exercises
-          .map((exercise) =>
-            exercise.id === exerciseId
-              ? {
-                  ...exercise,
-                  sets: exercise.sets.filter((_, index) => index !== setIndex),
-                }
-              : exercise,
-          )
-          .filter((exercise) => exercise.sets.length > 0),
-      };
-    });
+  const openHistoricalLog = (exerciseKey: string) => {
+    setHistoricalExerciseKey(exerciseKey);
+    setHistoricalWeight("");
+    setHistoricalReps("");
+    setIsHistoricalLogOpen(true);
   };
 
-  const finishWorkout = () => {
-    if (!currentWorkout) return;
-
-    const finalName =
-      workoutName.trim() || `Workout ${new Date(currentWorkout.date).toLocaleDateString()}`;
-    const finished = { ...currentWorkout, name: finalName };
-
-    setHistory((prev) => keepLastThirtyDays([finished, ...prev]));
-    setCurrentWorkout(null);
-    setExpandedExerciseId(null);
-    setWorkoutName("");
-    setIsFinishDialogOpen(false);
-    setActiveTab("workouts");
-    triggerHaptic();
-  };
-
-  const addExerciseFromExercisesTab = () => {
-    const name = newCatalogExerciseName.trim();
-    if (!name) return;
-
-    const normalized = normalizeExerciseName(name);
-    setExerciseCatalog((prev) => {
-      if (prev.some((exercise) => normalizeExerciseName(exercise) === normalized)) return prev;
-      return [...prev, name];
-    });
-
-    setSelectedExerciseKey(normalized);
-    setNewCatalogExerciseName("");
-    setIsAddExerciseDialogOpen(false);
-  };
-
-  const saveBackfillSession = () => {
-    const cleanExercise = backfillExerciseName.trim();
-    if (!cleanExercise) return;
-
-    const validSets = backfillSetsDraft
-      .map((set) => ({ ...set, weight: Number(set.weight), reps: Number(set.reps) }))
-      .filter((set) => set.weight > 0 && set.reps > 0);
-
-    if (validSets.length === 0) return;
-
-    const sessionDate = backfillDate
-      ? new Date(`${backfillDate}T12:00:00`).toISOString()
-      : new Date().toISOString();
-
-    const newSession: BackfillSession = {
-      id: uuidv4(),
-      exerciseName: cleanExercise,
-      date: sessionDate,
-      sets: validSets,
-      contextTag: backfillContextTag,
-    };
-
-    const normalized = normalizeExerciseName(cleanExercise);
-    setExerciseCatalog((prev) => {
-      if (prev.some((exercise) => normalizeExerciseName(exercise) === normalized)) return prev;
-      return [...prev, cleanExercise];
-    });
-
-    setBackfillSessions((prev) => [...prev, newSession]);
-    setSelectedExerciseKey(normalized);
-    setIsBackfillDialogOpen(false);
-    triggerHaptic();
-  };
-
-  const beginSessionEdit = (session: ExerciseSessionPoint) => {
-    setEditingSessionId(session.id);
-    setSessionEditDraft(session.sets.map((set) => ({ ...set })));
-  };
-
-  const cancelSessionEdit = () => {
-    setEditingSessionId(null);
-    setSessionEditDraft([]);
-  };
-
-  const applyWorkoutExerciseUpdate = (
-    workouts: Workout[],
-    workoutId: string,
-    exerciseId: string,
-    updater: (exercise: Exercise) => Exercise | null,
-  ) =>
-    workouts
-      .map((workout) => {
-        if (workout.id !== workoutId) return workout;
-        const nextExercises = workout.exercises
-          .map((exercise) => (exercise.id === exerciseId ? updater(exercise) : exercise))
-          .filter((exercise): exercise is Exercise => Boolean(exercise));
-        return { ...workout, exercises: nextExercises };
-      })
-      .filter((workout) => workout.exercises.length > 0);
-
-  const saveSessionEdit = (session: ExerciseSessionPoint) => {
-    const cleaned = sessionEditDraft
-      .map((set) => ({ ...set, weight: Number(set.weight), reps: Number(set.reps) }))
-      .filter((set) => set.weight > 0 && set.reps > 0);
-    if (cleaned.length === 0) return;
-
-    if (session.source.kind === "backfill") {
-      const backfillId = session.source.backfillId;
-      setBackfillSessions((prev) =>
-        prev.map((item) =>
-          item.id === backfillId
-            ? { ...item, sets: cleaned.map((set) => ({ ...set })) }
-            : item,
+  const saveHistoricalSet = () => {
+    if (!historicalExerciseKey) return;
+    const weight = Number(historicalWeight);
+    const reps = Number(historicalReps);
+    if (!Number.isFinite(weight) || !Number.isFinite(reps) || weight <= 0 || reps <= 0) return;
+    const isoDate = new Date(`${historicalDate}T12:00:00`).toISOString();
+    setExercises((prev) =>
+      sortExercises(
+        prev.map((exercise) =>
+          exercise.key === historicalExerciseKey
+            ? {
+                ...exercise,
+                entries: sortEntries([
+                  ...exercise.entries,
+                  {
+                    id: uuidv4(),
+                    date: isoDate,
+                    weight,
+                    reps,
+                  },
+                ]),
+              }
+            : exercise,
         ),
-      );
-      cancelSessionEdit();
-      triggerHaptic();
-      return;
-    }
-
-    const { workoutId, exerciseId } = session.source;
-    setHistory((prev) =>
-      applyWorkoutExerciseUpdate(prev, workoutId, exerciseId, (exercise) => ({
-        ...exercise,
-        sets: exercise.sets.map((set) => {
-          const patch = cleaned.find((item) => item.id === set.id);
-          return patch ? { ...set, weight: patch.weight, reps: patch.reps } : set;
-        }),
-      })),
+      ),
     );
-    setCurrentWorkout((prev) => {
-      if (!prev || prev.id !== workoutId) return prev;
-      const nextExercises = prev.exercises.map((exercise) => {
-        if (exercise.id !== exerciseId) return exercise;
-        return {
+    setIsHistoricalLogOpen(false);
+    setHistoricalWeight("");
+    setHistoricalReps("");
+    triggerHaptic();
+  };
+
+  const trackedExercises = useMemo(
+    () => {
+      const favoriteSet = new Set(favoriteExerciseKeys);
+      return [...exercises]
+        .map((exercise) => ({
           ...exercise,
-          sets: exercise.sets.map((set) => {
-            const patch = cleaned.find((item) => item.id === set.id);
-            return patch ? { ...set, weight: patch.weight, reps: patch.reps } : set;
-          }),
-        };
-      });
-      return { ...prev, exercises: nextExercises };
-    });
-    cancelSessionEdit();
-    triggerHaptic();
-  };
-
-  const deleteSession = (session: ExerciseSessionPoint) => {
-    if (session.source.kind === "backfill") {
-      const backfillId = session.source.backfillId;
-      setBackfillSessions((prev) => prev.filter((item) => item.id !== backfillId));
-      if (editingSessionId === session.id) cancelSessionEdit();
-      triggerHaptic();
-      return;
-    }
-
-    const { workoutId, exerciseId } = session.source;
-    setHistory((prev) =>
-      applyWorkoutExerciseUpdate(prev, workoutId, exerciseId, () => null),
-    );
-    setCurrentWorkout((prev) => {
-      if (!prev || prev.id !== workoutId) return prev;
-      const nextExercises = prev.exercises.filter((exercise) => exercise.id !== exerciseId);
-      return { ...prev, exercises: nextExercises };
-    });
-    if (editingSessionId === session.id) cancelSessionEdit();
-    triggerHaptic();
-  };
-
-  const deleteWorkoutEntry = (workout: Workout) => {
-    if (workout.id.startsWith("backfill-day-")) {
-      const dayKey = workout.id.replace("backfill-day-", "");
-      setBackfillSessions((prev) =>
-        prev.filter((session) => getDayKey(session.date) !== dayKey),
-      );
-      triggerHaptic();
-      return;
-    }
-
-    setHistory((prev) => prev.filter((item) => item.id !== workout.id));
-    setCurrentWorkout((prev) => (prev?.id === workout.id ? null : prev));
-    triggerHaptic();
-  };
-
-  const filteredCommonExercises = commonExercises.filter((exercise) =>
-    exercise.toLowerCase().includes(exerciseSearch.toLowerCase().trim()),
+          stats: getExerciseStats(exercise),
+          isFavorite: favoriteSet.has(exercise.key),
+        }))
+        .sort((a, b) => {
+          if (a.isFavorite !== b.isFavorite) return a.isFavorite ? -1 : 1;
+          const latestA = a.entries[a.entries.length - 1]?.date ?? "";
+          const latestB = b.entries[b.entries.length - 1]?.date ?? "";
+          if (latestA !== latestB) return latestB.localeCompare(latestA);
+          return a.name.localeCompare(b.name);
+        });
+    },
+    [exercises, favoriteExerciseKeys],
   );
 
-  const loggedDatesForBackfillExercise = useMemo(() => {
-    const normalized = normalizeExerciseName(backfillExerciseName);
-    if (!normalized) return [] as string[];
-    const all = [...workoutBasedSessions, ...backfillSessions];
-    const dates = all
-      .filter((session) => normalizeExerciseName(session.exerciseName) === normalized)
-      .map((session) => getDayKey(session.date));
-    return Array.from(new Set(dates)).sort((a, b) => b.localeCompare(a));
-  }, [backfillExerciseName, backfillSessions, workoutBasedSessions]);
+  const selectedExercise = trackedExercises.find((exercise) => exercise.key === selectedExerciseKey) ?? null;
 
-  const renderDashboard = () => {
-    const dashboardRows = [
-      ...orderedDashboardMetrics.map((metric) => ({
-        key: `metric-${metric.id}`,
-        kind: "metric" as const,
-        trend: metric.trend,
-        title: metric.title,
-        value: metric.value,
-        goalKey: metric.id,
-        goalText: dashboardGoals[metric.id]
-          ? `Goal: ${dashboardGoals[metric.id]} ${metric.goalUnit}${
-              metric.id === "bodyweight_trend"
-                ? ` (${dashboardGoalDirection[metric.id] ?? "decrease"})`
-                : ""
-            }`
-          : null,
-        onPrimaryAction:
-          metric.id === "bodyweight_trend" ? openBodyweightDialog : () => openGoalEditor(metric.id, metric.title),
-        isBodyweight: metric.id === "bodyweight_trend",
-      })),
-      ...dashboardTrackedExercises.map((exercise) => ({
-        key: `exercise-${exercise.key}`,
-        kind: "exercise" as const,
-        trend: exercise.trend,
-        title: exercise.name,
-        value: exercise.workingSet,
-        goalKey: `exercise:${exercise.key}`,
-        goalText: dashboardGoals[`exercise:${exercise.key}`]
-          ? `Goal: ${dashboardGoals[`exercise:${exercise.key}`]} (${units})`
-          : null,
-        onPrimaryAction: () => {
-          setActiveTab("exercises");
-          setSelectedExerciseKey(exercise.key);
-        },
-        isBodyweight: false,
-      })),
-    ];
+  const selectedExerciseSessions = useMemo(() => {
+    if (!selectedExercise) return [];
+    const grouped = new Map<string, LoggedSet[]>();
+
+    selectedExercise.entries.forEach((entry) => {
+      const groupKey = entry.sessionId ?? entry.date.slice(0, 10);
+      const bucket = grouped.get(groupKey) ?? [];
+      bucket.push(entry);
+      grouped.set(groupKey, bucket);
+    });
+
+    return Array.from(grouped.entries())
+      .map(([groupKey, entries]) => {
+        const sorted = sortEntries(entries);
+        const maxWeight = sorted.reduce((max, entry) => Math.max(max, entry.weight), 0);
+        const repWeightedWeight =
+          sorted.reduce((sum, entry) => sum + entry.weight * entry.reps, 0) /
+          Math.max(1, sorted.reduce((sum, entry) => sum + entry.reps, 0));
+        const totalReps = sorted.reduce((sum, entry) => sum + entry.reps, 0);
+        return {
+          dayKey: groupKey,
+          label: formatShortDate(sorted[sorted.length - 1]?.date ?? new Date().toISOString()),
+          date: sorted[sorted.length - 1]?.date ?? new Date().toISOString(),
+          entries: sorted,
+          maxWeight,
+          repWeightedWeight,
+          totalReps,
+          totalSets: sorted.length,
+        };
+      })
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [selectedExercise]);
+
+  const selectedExerciseDayGroups = useMemo<DayGroup[]>(() => {
+    if (!selectedExercise) return [];
+    const groups = new Map<string, LoggedSet[]>();
+    selectedExercise.entries.forEach((entry) => {
+      const dayKey = entry.date.slice(0, 10);
+      const bucket = groups.get(dayKey) ?? [];
+      bucket.push(entry);
+      groups.set(dayKey, bucket);
+    });
+
+    return Array.from(groups.entries())
+      .map(([dayKey, entries]) => ({
+        dayKey,
+        label: formatShortDate(entries[entries.length - 1]?.date ?? `${dayKey}T12:00:00`),
+        entries: sortEntries(entries),
+      }))
+      .sort((a, b) => b.dayKey.localeCompare(a.dayKey));
+  }, [selectedExercise]);
+
+  useEffect(() => {
+    setHoveredSessionIndex(
+      selectedExerciseSessions.length > 0 ? selectedExerciseSessions.length - 1 : null,
+    );
+  }, [plotMode, selectedExerciseKey, selectedExerciseSessions]);
+
+  const renderTrendIcon = (trend: Trend) => {
+    if (trend === "up") {
+      return (
+        <span className="inline-flex size-9 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400">
+          <TrendingUp className="h-4 w-4" />
+        </span>
+      );
+    }
+    if (trend === "down") {
+      return (
+        <span className="inline-flex size-9 items-center justify-center rounded-full bg-red-500/15 text-red-400">
+          <TrendingDown className="h-4 w-4" />
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex size-9 items-center justify-center rounded-full bg-yellow-500/15 text-yellow-300">
+        <Minus className="h-4 w-4" />
+      </span>
+    );
+  };
+
+  const renderChart = () => {
+    if (!selectedExercise || selectedExerciseSessions.length === 0) {
+      return (
+        <div className="rounded-2xl border border-dashed border-border/70 px-4 py-12 text-center text-sm text-muted-foreground">
+          Log a few sets to unlock the visualizer.
+        </div>
+      );
+    }
+
+    const values =
+      plotMode === "max_weight"
+        ? selectedExerciseSessions.map((session) => session.maxWeight)
+        : selectedExerciseSessions.map((session) => session.repWeightedWeight);
+
+    const chart = buildChart(values);
+    const timeScale = buildTimeScale(selectedExerciseSessions.map((session) => session.date));
+    const linePoints = values.map((value, index) => ({
+      x: timeScale.getX(selectedExerciseSessions[index]?.date ?? new Date().toISOString()),
+      y: chart.getY(value),
+    }));
+    const areaPath = buildAreaPath(linePoints);
+    const linePath = buildLinePath(linePoints);
+    const focusIndex = hoveredSessionIndex ?? values.length - 1;
+    const focusSession =
+      selectedExerciseSessions[focusIndex] ?? selectedExerciseSessions[selectedExerciseSessions.length - 1];
+    const focusPoint = linePoints[focusIndex] ?? linePoints[linePoints.length - 1];
+
+    const handleChartMove = (clientX: number, rect: DOMRect) => {
+      const relative = Math.max(0, Math.min(rect.width, clientX - rect.left));
+      const pointerTime = timeScale.start + (rect.width === 0 ? 0 : (relative / rect.width) * (timeScale.end - timeScale.start));
+      let nextIndex = 0;
+      let smallestDistance = Number.POSITIVE_INFINITY;
+      selectedExerciseSessions.forEach((session, index) => {
+        const distance = Math.abs(new Date(session.date).getTime() - pointerTime);
+        if (distance < smallestDistance) {
+          smallestDistance = distance;
+          nextIndex = index;
+        }
+      });
+      setHoveredSessionIndex(nextIndex);
+    };
 
     return (
-      <div className="flex h-full flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-emerald-300 via-emerald-400 to-cyan-400 bg-clip-text text-transparent">
-            GradientTrack
-          </h1>
-          <Button
-            variant="outline"
-            className="h-9 border-emerald-600/30"
-            onClick={() => setIsDashboardManageOpen(true)}
-          >
-            Manage
-          </Button>
+      <div className="space-y-3">
+        <div className={`${subtlePanelClass} grid grid-cols-[1.2fr_0.8fr] gap-3 p-3`}>
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.18em] text-green-200/70">
+              {plotMode === "max_weight" ? "Max Weight" : "Rep-Weighted Load"}
+            </p>
+            <p className="text-3xl font-semibold leading-none tracking-tight tabular-nums">
+              {Math.round(plotMode === "max_weight" ? focusSession.maxWeight : focusSession.repWeightedWeight)} {units}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-300">
+              <span className="rounded-full border border-green-500/10 bg-green-500/[0.04] px-2.5 py-1">
+                {focusSession.totalSets} sets
+              </span>
+              <span className="rounded-full border border-green-500/10 bg-green-500/[0.04] px-2.5 py-1">
+                {focusSession.totalReps} reps
+              </span>
+            </div>
+          </div>
+          <div className="text-right">
+            <p className="text-[11px] uppercase tracking-[0.18em] text-green-200/70">Focused Session</p>
+            <p className="text-lg font-semibold">{focusSession.label}</p>
+            <p className="text-xs text-slate-400">{formatAxisDate(focusSession.date)}</p>
+          </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {dashboardRows.length > 0 ? (
-            <div className="overflow-hidden rounded-2xl border border-border/70 bg-gradient-to-br from-card to-emerald-950/10 divide-y divide-border/60">
-              {dashboardRows.map((row, index) => (
-                <div key={row.key} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-3 py-3">
-                  <div>{renderTrendIcon(row.trend)}</div>
-                  <button type="button" className="min-w-0 text-left" onClick={row.onPrimaryAction}>
-                    <p className={`truncate ${row.kind === "exercise" ? "text-xl" : "text-xs uppercase tracking-wide text-muted-foreground"} font-semibold`}>
-                      {row.title}
-                    </p>
-                    <p className="truncate text-2xl font-bold leading-none tabular-nums">{row.value}</p>
-                    {row.goalText ? <p className="text-xs text-cyan-300/90">{row.goalText}</p> : null}
-                  </button>
-                  <div className="flex flex-col items-end gap-1">
-                    {row.kind === "metric" ? (
-                      <>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 rounded-md text-cyan-300"
-                          onClick={row.onPrimaryAction}
-                        >
-                          {row.isBodyweight ? <Plus className="h-3.5 w-3.5" /> : <Target className="h-3.5 w-3.5" />}
-                        </Button>
-                        <div className="flex gap-1">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 rounded-md text-muted-foreground"
-                            onClick={() => moveMetricByDirection(row.goalKey as DashboardMetricId, "up")}
-                            disabled={index === 0}
-                          >
-                            <ChevronUp className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 rounded-md text-muted-foreground"
-                            onClick={() => moveMetricByDirection(row.goalKey as DashboardMetricId, "down")}
-                            disabled={index === orderedDashboardMetrics.length - 1}
-                          >
-                            <ChevronDown className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </>
-                    ) : (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 rounded-md text-cyan-300"
-                        onClick={() => openGoalEditor(row.goalKey, row.title)}
-                      >
-                        <Target className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                  </div>
-                </div>
+        <div className="overflow-hidden rounded-[1.75rem] border border-green-500/10 bg-[linear-gradient(180deg,rgba(7,17,13,0.98),rgba(4,9,7,1))] p-3">
+          <svg
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            className="h-72 w-full touch-none"
+            onPointerMove={(event) => handleChartMove(event.clientX, event.currentTarget.getBoundingClientRect())}
+            onPointerDown={(event) => handleChartMove(event.clientX, event.currentTarget.getBoundingClientRect())}
+            onPointerLeave={() => setHoveredSessionIndex(selectedExerciseSessions.length - 1)}
+          >
+            {[25, 50, 75].map((line) => (
+              <line
+                key={`h-${line}`}
+                x1="0"
+                y1={line}
+                x2="100"
+                y2={line}
+                stroke="rgba(120, 255, 173, 0.12)"
+                strokeWidth="0.45"
+              />
+            ))}
+            {selectedExerciseSessions.map((_, index) => {
+              if (index === 0 || index === selectedExerciseSessions.length - 1) return null;
+              const x = timeScale.getX(selectedExerciseSessions[index]?.date ?? new Date().toISOString());
+              return (
+                <line
+                  key={`v-${index}`}
+                  x1={x}
+                  y1="0"
+                  x2={x}
+                  y2="92"
+                  stroke="rgba(120, 255, 173, 0.12)"
+                  strokeDasharray="2 2"
+                  strokeWidth="0.35"
+                />
+              );
+            })}
+
+            <line
+              x1={focusPoint.x}
+              y1="0"
+              x2={focusPoint.x}
+              y2="92"
+              stroke="rgba(158, 255, 190, 0.28)"
+              strokeDasharray="2 2"
+              strokeWidth="0.45"
+            />
+
+            <path d={areaPath} fill="rgba(34, 197, 94, 0.18)" />
+            <path
+              d={linePath}
+              fill="none"
+              stroke="rgba(110, 231, 183, 0.98)"
+              strokeWidth="1.8"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+
+            {selectedExerciseSessions.map((session, index) => {
+              const point = linePoints[index];
+              const isFocused = index === focusIndex;
+              return (
+                <g key={`line-point-${session.dayKey}`}>
+                  <circle
+                    cx={point.x}
+                    cy={point.y}
+                    r={isFocused ? 2 : 1.2}
+                    fill="rgba(4,9,7,0.98)"
+                    stroke="rgba(110,231,183,0.98)"
+                    strokeWidth={isFocused ? 1.2 : 0.9}
+                  />
+                </g>
+              );
+            })}
+
+            <g transform={`translate(${focusPoint.x}, ${Math.max(14, focusPoint.y - 8)})`}>
+              <rect
+                x="-12"
+                y="-8"
+                rx="4"
+                width="24"
+                height="10"
+                fill="rgba(17,24,20,0.85)"
+                stroke="rgba(110,231,183,0.22)"
+                strokeWidth="0.35"
+              />
+              <text
+                x="0"
+                y="-1.2"
+                textAnchor="middle"
+                fontSize="3.2"
+                fill="rgba(236,253,245,0.95)"
+              >
+                {Math.round(plotMode === "max_weight" ? focusSession.maxWeight : focusSession.repWeightedWeight)}
+              </text>
+            </g>
+
+            {plotMode === "weight_reps"
+              ? selectedExerciseSessions.flatMap((session) =>
+                  session.entries.map((entry, entryIndex) => {
+                    const xBase = timeScale.getX(session.date);
+                    const x = Math.max(3, Math.min(97, xBase + (entryIndex - (session.entries.length - 1) / 2) * 1.1));
+                    const y = chart.getY(entry.weight);
+                    const radius = Math.min(1.8, 0.55 + entry.reps * 0.06);
+                    return (
+                      <circle
+                        key={entry.id}
+                        cx={x}
+                        cy={y}
+                        r={radius}
+                        fill="none"
+                        stroke="rgba(167,243,208,0.82)"
+                        strokeWidth="0.7"
+                      />
+                    );
+                  }),
+                )
+              : null}
+          </svg>
+
+          <div className="mt-2 grid grid-cols-[1fr_auto] items-end gap-2 text-xs text-slate-400">
+            <div className="flex items-center justify-between">
+              <span>{formatAxisDate(new Date(timeScale.start).toISOString())}</span>
+              <span>{formatAxisDate(new Date((timeScale.start + timeScale.end) / 2).toISOString())}</span>
+              <span>{formatAxisDate(new Date(timeScale.end).toISOString())}</span>
+            </div>
+            <div className="space-y-1 text-right">
+              {[...chart.ticks].reverse().map((tick) => (
+                <p key={`tick-${tick}`} className="tabular-nums">
+                  {tick} {units}
+                </p>
               ))}
             </div>
-          ) : (
-            <Card className="border-border/70 bg-card/70">
-              <CardContent className="py-10 text-center text-muted-foreground">
-                No dashboard items selected.
-                <br />
-                Tap Manage to choose what to track.
-              </CardContent>
-            </Card>
-          )}
+          </div>
         </div>
       </div>
     );
   };
 
-  const renderExerciseDetail = (exercise: TrackedExercise) => {
-    const hasEnoughData = exercise.totalSets >= 2;
-    const sessions = exercise.sessions;
-    const latestSession = sessions[sessions.length - 1];
-    const latestSessionTotalReps = latestSession
-      ? latestSession.sets.reduce((sum, set) => sum + set.reps, 0)
-      : 0;
-    const sortedSessions = [...sessions].sort(
-      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-    );
+  const renderExerciseDetail = () => {
+    if (!selectedExercise) return null;
 
-    const allSets = sessions.flatMap((session, sessionIndex) =>
-      session.sets.map((set, setIndex) => ({
-        id: `${session.id}-${setIndex}`,
-        sessionIndex,
-        setIndex,
-        weight: set.weight,
-        reps: set.reps,
-      })),
-    );
-    const sessionRepWeightedWeight = sessions.map((session) => {
-      const repTotal = Math.max(1, session.sets.reduce((sum, set) => sum + set.reps, 0));
-      const weighted = session.sets.reduce((sum, set) => sum + set.weight * set.reps, 0) / repTotal;
-      return weighted;
-    });
-
-    const rmScale = buildChartScale(
-      sessions.length > 0 ? sessions.map((item) => item.est1RM) : [0],
-    );
-    const weightScale = buildChartScale(
-      allSets.length > 0 ? allSets.map((set) => set.weight) : [0],
-    );
-
-    const getX = (index: number, length: number) => (length === 1 ? 54 : 12 + (index / (length - 1)) * 84);
-
-    const sessionLinePoints = sessions
-      .map((session, index) => `${getX(index, sessions.length)},${rmScale.toY(session.est1RM)}`)
-      .join(" ");
-
-    const weightedLinePoints = sessionRepWeightedWeight
-      .map((value, index) => `${getX(index, sessions.length)},${weightScale.toY(value)}`)
-      .join(" ");
-
-    const chartInfo = {
-      one_rm: "Estimated 1RM uses Brzycki: weight × (36 / (37 - reps)).",
-      set_map:
-        "Y-axis is weight. Hollow circles are sets (size scales with reps), white line is rep-weighted average load by session.",
-      data: "Edit individual logged sessions inline. Changes update trends and dashboard metrics.",
-    } as const;
+    const detailDraft = getDraft(selectedExercise.key);
 
     return (
       <div className="flex h-full flex-col gap-3">
-        <Card className="gradient-card flex-1">
-          <CardHeader className="pb-1">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <CardTitle className="text-2xl">{exercise.name}</CardTitle>
-                <p className="text-xs text-muted-foreground">
-                  {exercise.totalSets} sets logged
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-9 w-9 border-emerald-600/30"
-                  onClick={() => toggleTrackedExercise(exercise.key)}
-                >
-                  <Target className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="outline"
-                  className="h-9 border-emerald-600/30"
-                  onClick={() => openBackfillDialog(exercise.name)}
-                >
-                  Backfill
-                </Button>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-2 px-2 pb-2">
-            <div className="grid grid-cols-3 gap-2">
-              <Button
-                variant={exerciseVizMode === "set_map" ? "default" : "outline"}
-                className="h-10"
-                onClick={() => changeExerciseVizMode("set_map")}
-              >
-                Weight x Reps
-              </Button>
-              <Button
-                variant={exerciseVizMode === "one_rm" ? "default" : "outline"}
-                className="h-10"
-                onClick={() => changeExerciseVizMode("one_rm")}
-              >
-                1RM Trend
-              </Button>
-              <Button
-                variant={exerciseVizMode === "data" ? "default" : "outline"}
-                className="h-10"
-                onClick={() => changeExerciseVizMode("data")}
-              >
-                Data
-              </Button>
-            </div>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-semibold leading-tight">{selectedExercise.name}</h1>
+            <p className="text-sm text-slate-400">
+              {selectedExercise.stats.maxWeight} {units} max
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              className="h-9 rounded-xl px-3 text-xs text-green-300"
+              onClick={() => openHistoricalLog(selectedExercise.key)}
+            >
+              Past
+            </Button>
+            <div>{renderTrendIcon(selectedExercise.stats.trend)}</div>
+          </div>
+        </div>
 
-            <div className="rounded-lg border border-border/70 bg-background/70 p-3">
-              <div className="mb-2 flex items-center justify-between">
-                <p className="text-sm font-medium">
-                  {exerciseVizMode === "one_rm"
-                    ? "Estimated 1RM"
-                    : exerciseVizMode === "set_map"
-                      ? "Weight x Reps Map"
-                      : "Exercise Data"}
-                </p>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground">
-                      <Info className="h-4 w-4" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-72 text-sm text-muted-foreground" align="end">
-                    {chartInfo[exerciseVizMode]}
-                  </PopoverContent>
-                </Popover>
-              </div>
+        <div className={`${subtlePanelClass} p-3`}>
+          <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
+            <Input
+              type="number"
+              inputMode="decimal"
+              placeholder={`Weight (${units})`}
+              value={detailDraft.weight}
+              onChange={(event) => setDraftValue(selectedExercise.key, "weight", event.target.value)}
+              className="h-12 rounded-2xl border-white/8 bg-white/[0.03] text-base"
+            />
+            <Input
+              type="number"
+              inputMode="numeric"
+              placeholder="Reps"
+              value={detailDraft.reps}
+              onChange={(event) => setDraftValue(selectedExercise.key, "reps", event.target.value)}
+              className="h-12 rounded-2xl border-white/8 bg-white/[0.03] text-base"
+            />
+            <Button className="h-12 rounded-2xl px-4" onClick={() => logSetDirect(selectedExercise.key)}>
+              Log
+            </Button>
+          </div>
+        </div>
 
-              {exerciseVizMode === "one_rm" ? (
-                !hasEnoughData ? (
-                  <div className="rounded-lg border border-dashed border-border/70 p-5 text-sm text-muted-foreground">
-                    Add at least 2 total sets for this exercise to unlock trend visualizations.
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-[34px_1fr] gap-1">
-                      <div className="flex h-64 flex-col justify-between text-[11px] text-muted-foreground">
-                        {rmScale.ticks.map((tick, idx) => (
-                          <span key={`rm-${idx}`}>{tick}</span>
-                        ))}
-                      </div>
-                      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-64 w-full">
-                        {[26, 50, 74].map((line) => (
-                          <line
-                            key={line}
-                            x1="10"
-                            y1={line}
-                            x2="98"
-                            y2={line}
-                            stroke="rgba(148,163,184,0.25)"
-                            strokeWidth="0.5"
-                          />
-                        ))}
-                        <polyline
-                          points={sessionLinePoints}
-                          fill="none"
-                          stroke="rgba(255,255,255,0.92)"
-                          strokeWidth="2"
-                          strokeLinejoin="round"
-                          strokeLinecap="round"
-                        />
-                        {sessions.map((session, index) => (
-                          <circle
-                            key={session.id}
-                            cx={getX(index, sessions.length)}
-                            cy={rmScale.toY(session.est1RM)}
-                            r="1.7"
-                            fill="none"
-                            stroke="rgba(96,165,250,0.95)"
-                            strokeWidth="1.05"
-                          />
-                        ))}
-                      </svg>
-                    </div>
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>{sessions[0]?.label}</span>
-                      <span>{sessions[sessions.length - 1]?.label}</span>
-                    </div>
-                  </div>
-                )
-              ) : exerciseVizMode === "set_map" ? (
-                !hasEnoughData ? (
-                  <div className="rounded-lg border border-dashed border-border/70 p-5 text-sm text-muted-foreground">
-                    Add at least 2 total sets for this exercise to unlock trend visualizations.
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-[34px_1fr] gap-1">
-                      <div className="flex h-64 flex-col justify-between text-[11px] text-muted-foreground">
-                        {weightScale.ticks.map((tick, idx) => (
-                          <span key={`set-${idx}`}>{tick}</span>
-                        ))}
-                      </div>
-                      <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-64 w-full">
-                        {[26, 50, 74].map((line) => (
-                          <line
-                            key={line}
-                            x1="10"
-                            y1={line}
-                            x2="98"
-                            y2={line}
-                            stroke="rgba(148,163,184,0.2)"
-                            strokeWidth="0.5"
-                          />
-                        ))}
-                        {allSets.map((set) => {
-                          const xBase = getX(set.sessionIndex, sessions.length);
-                          const jitter = ((set.setIndex % 5) - 2) * 1.3;
-                          const x = Math.max(11, Math.min(98, xBase + jitter));
-                          const y = weightScale.toY(set.weight);
-                          const radius = Math.min(2.6, 1 + set.reps * 0.1);
-                          return (
-                            <circle
-                              key={set.id}
-                              cx={x}
-                              cy={y}
-                              r={radius}
-                              fill="none"
-                              stroke="rgba(96,165,250,0.95)"
-                              strokeWidth="1"
-                            />
-                          );
-                        })}
-                        <polyline
-                          points={weightedLinePoints}
-                          fill="none"
-                          stroke="rgba(255,255,255,0.92)"
-                          strokeWidth="1.4"
-                          strokeLinejoin="round"
-                          strokeLinecap="round"
-                        />
-                      </svg>
-                    </div>
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>{sessions[0]?.label}</span>
-                      <span>{sessions[sessions.length - 1]?.label}</span>
-                    </div>
-                  </div>
-                )
-              ) : sortedSessions.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-border/70 p-5 text-sm text-muted-foreground">
-                  No sessions logged yet.
-                </div>
-              ) : (
-                <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-                  <div className="grid grid-cols-[minmax(0,1fr)_64px_64px_120px] items-center gap-2 px-1 text-[11px] uppercase tracking-wide text-muted-foreground">
-                    <span>Date</span>
-                    <span className="text-center">Sets</span>
-                    <span className="text-center">Reps</span>
-                    <span className="text-center">Actions</span>
-                  </div>
-                  {sortedSessions.map((session) => {
-                    const isEditing = editingSessionId === session.id;
-                    const totalReps = session.sets.reduce((sum, set) => sum + set.reps, 0);
-                    return (
-                      <div key={`session-${session.id}`} className="rounded-md border border-border/60 px-2 py-2">
-                        <div className="grid grid-cols-[minmax(0,1fr)_64px_64px_120px] items-center gap-2">
-                          <span className="text-base font-semibold tabular-nums">{session.label}</span>
-                          <span className="text-center text-base font-semibold tabular-nums">{session.sets.length}</span>
-                          <span className="text-center text-base font-semibold tabular-nums">{totalReps}</span>
-                          <div className="flex items-center justify-center gap-1">
-                            {isEditing ? (
-                              <>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  className="h-7 px-2 text-xs border-emerald-600/30"
-                                  onClick={() => saveSessionEdit(session)}
-                                >
-                                  Save
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  className="h-7 px-2 text-xs"
-                                  onClick={cancelSessionEdit}
-                                >
-                                  Cancel
-                                </Button>
-                              </>
-                            ) : (
-                              <>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  className="h-7 px-2 text-xs"
-                                  onClick={() => beginSessionEdit(session)}
-                                >
-                                  Edit
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  className="h-7 px-2 text-xs text-red-400 hover:text-red-300"
-                                  onClick={() => deleteSession(session)}
-                                >
-                                  Delete
-                                </Button>
-                              </>
-                            )}
-                          </div>
+        <div className={`${subtlePanelClass} grid grid-cols-3 gap-2 p-1`}>
+          <Button
+            variant={plotMode === "max_weight" ? "default" : "ghost"}
+            className="h-10 rounded-xl"
+            onClick={() => setPlotMode("max_weight")}
+          >
+            Max Weight
+          </Button>
+          <Button
+            variant={plotMode === "weight_reps" ? "default" : "ghost"}
+            className="h-10 rounded-xl"
+            onClick={() => setPlotMode("weight_reps")}
+          >
+            Weight x Reps
+          </Button>
+          <Button
+            variant={plotMode === "data" ? "default" : "ghost"}
+            className="h-10 rounded-xl"
+            onClick={() => setPlotMode("data")}
+          >
+            Data
+          </Button>
+        </div>
+
+        {plotMode === "data" ? (
+          <div className={`min-h-0 flex-1 overflow-y-auto ${shellClass}`}>
+            {selectedExerciseDayGroups.length === 0 ? (
+              <div className="px-4 py-12 text-center text-sm text-slate-400">No saved sets yet.</div>
+            ) : (
+              <div className="divide-y divide-white/6">
+                {selectedExerciseDayGroups.map((group) => {
+                  const groupKey = `${selectedExercise.key}:${group.dayKey}`;
+                  const isExpanded = Boolean(expandedDataGroups[groupKey]);
+                  return (
+                    <div key={groupKey} className="px-4 py-3">
+                      <button
+                        type="button"
+                        className="grid w-full grid-cols-[1fr_auto] items-center gap-3 text-left"
+                        onClick={() =>
+                          setExpandedDataGroups((prev) => ({
+                            ...prev,
+                            [groupKey]: !prev[groupKey],
+                          }))
+                        }
+                      >
+                        <div>
+                          <p className="text-lg font-semibold">{group.label}</p>
+                          <p className="text-sm text-slate-400">{summarizeReps(group.entries)}</p>
                         </div>
+                        <span className="inline-flex items-center gap-2 text-xs text-slate-400">
+                          {group.entries.length} sets
+                          {isExpanded ? (
+                            <ChevronUp className="h-4 w-4" />
+                          ) : (
+                            <ChevronDown className="h-4 w-4" />
+                          )}
+                        </span>
+                      </button>
 
-                        {isEditing ? (
-                          <div className="mt-2 space-y-2">
-                            {sessionEditDraft.map((set) => (
-                              <div key={`edit-${session.id}-${set.id}`} className="grid grid-cols-2 gap-2">
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  value={set.weight}
-                                  onChange={(event) => {
-                                    const value = Math.max(0, Number(event.target.value) || 0);
-                                    setSessionEditDraft((prev) =>
-                                      prev.map((item) =>
-                                        item.id === set.id ? { ...item, weight: value } : item,
-                                      ),
-                                    );
-                                  }}
-                                />
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  value={set.reps}
-                                  onChange={(event) => {
-                                    const value = Math.max(0, Number(event.target.value) || 0);
-                                    setSessionEditDraft((prev) =>
-                                      prev.map((item) =>
-                                        item.id === set.id ? { ...item, reps: value } : item,
-                                      ),
-                                    );
-                                  }}
-                                />
-                              </div>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {latestSession ? (
-              <div className="grid grid-cols-3 gap-2 rounded-lg border border-border/70 bg-background/70 p-2">
-                <div>
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Latest Top Set</p>
-                  <p className="text-base font-semibold tabular-nums">
-                    {latestSession.topSet.weight}x{latestSession.topSet.reps}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Latest Reps</p>
-                  <p className="text-base font-semibold tabular-nums">{latestSessionTotalReps}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Last Context</p>
-                  <p className="text-base font-semibold">{latestSession.contextTag ?? "normal"}</p>
-                </div>
+                      {isExpanded ? (
+                        <div className="mt-3 space-y-2">
+                          {group.entries.map((entry) => (
+                            <div
+                              key={entry.id}
+                              className="grid grid-cols-[1fr_1fr_auto] items-center gap-2 rounded-2xl border border-green-500/10 bg-green-500/[0.03] p-2"
+                            >
+                              <Input
+                                type="number"
+                                inputMode="decimal"
+                                value={entry.weight}
+                                onChange={(event) =>
+                                  updateEntry(
+                                    selectedExercise.key,
+                                    entry.id,
+                                    "weight",
+                                    Math.max(0, Number(event.target.value) || 0),
+                                  )
+                                }
+                                className="h-10 rounded-xl border-white/8 bg-white/[0.03]"
+                              />
+                              <Input
+                                type="number"
+                                inputMode="numeric"
+                                value={entry.reps}
+                                onChange={(event) =>
+                                  updateEntry(
+                                    selectedExercise.key,
+                                    entry.id,
+                                    "reps",
+                                    Math.max(0, Number(event.target.value) || 0),
+                                  )
+                                }
+                                className="h-10 rounded-xl border-white/8 bg-white/[0.03]"
+                              />
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-red-400 hover:text-red-300"
+                                onClick={() => deleteEntry(selectedExercise.key, entry.id)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
-            ) : null}
-
-          </CardContent>
-        </Card>
+            )}
+          </div>
+        ) : (
+          <div className="min-h-0 flex-1">{renderChart()}</div>
+        )}
       </div>
     );
   };
 
   const renderExercises = () => {
-    if (selectedExercise) return renderExerciseDetail(selectedExercise);
+    if (selectedExercise) return renderExerciseDetail();
 
     return (
-      <div className="flex h-full flex-col gap-3">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-2xl font-semibold">Exercises</h2>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" className="h-10 border-emerald-600/30" onClick={() => setIsDashboardManageOpen(true)}>
-              Dashboard
-            </Button>
-            <Button className="h-10" onClick={() => setIsAddExerciseDialogOpen(true)}>
-              Add
-            </Button>
-          </div>
-        </div>
-
+      <div className="flex h-full flex-col">
         {trackedExercises.length === 0 ? (
-          <Card className="border-border/70 bg-card/70 flex-1">
-            <CardContent className="py-10 text-center text-muted-foreground">
-              No tracked exercises yet.
-              <br />
-              Add one, then backfill or log a workout.
+          <Card className={`${shellClass} flex-1`}>
+            <CardContent className="flex h-full flex-col items-center justify-center px-6 py-12 text-center text-muted-foreground">
+              Start by adding an exercise.
             </CardContent>
           </Card>
         ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="overflow-hidden rounded-2xl border border-border/70 bg-gradient-to-br from-card to-emerald-950/10 divide-y divide-border/60">
-            {trackedExercises.map((exercise) => {
-              const isTrackedOnDashboard = trackedDashboardExercises.includes(exercise.key);
-              return (
-                <div
-                  key={exercise.key}
-                  className="px-3 py-3"
-                >
-                  <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3">
-                    <div>{renderTrendIcon(exercise.trend)}</div>
-                    <button
-                      type="button"
-                      className="min-w-0 flex-1 text-left"
-                      onClick={() => openExerciseDetail(exercise.key)}
-                    >
-                      <p className="text-2xl font-semibold leading-tight">{exercise.name}</p>
-                      <p className="text-lg font-semibold tabular-nums">{exercise.workingSet}</p>
-                      <p className="text-xs text-muted-foreground">{exercise.totalSets} sets logged</p>
-                    </button>
+          <div className={`min-h-0 flex-1 overflow-y-auto ${shellClass}`}>
+            <div className="divide-y divide-white/6">
+              {trackedExercises.map((exercise) => {
+                const draft = getDraft(exercise.key);
+                return (
+                  <div key={exercise.key} className="px-4 py-3">
+                    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
+                      <button
+                        type="button"
+                        className="min-w-0 text-left"
+                        onClick={() => {
+                          setSelectedExerciseKey(exercise.key);
+                          setPlotMode("max_weight");
+                        }}
+                      >
+                        <p className="truncate text-2xl font-semibold leading-tight">{exercise.name}</p>
+                        <p className="mt-1 text-lg font-medium leading-none tabular-nums text-slate-200">
+                          {exercise.stats.maxWeight} {units}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-400">
+                          {exercise.stats.latestEntry
+                            ? `Last ${exercise.stats.latestEntry.weight} x ${exercise.stats.latestEntry.reps}`
+                            : "No sets logged yet"}
+                        </p>
+                      </button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={`mt-1 rounded-full ${exercise.isFavorite ? "text-green-300" : "text-slate-500"}`}
+                        onClick={() => toggleFavorite(exercise.key)}
+                      >
+                        <Pin className="h-4 w-4" />
+                      </Button>
+                    </div>
 
-                    <Button
-                      variant={isTrackedOnDashboard ? "default" : "outline"}
-                      size="icon"
-                      className="h-9 w-9 border-emerald-600/30"
-                      onClick={() => toggleTrackedExercise(exercise.key)}
-                    >
-                      <Target className="h-4 w-4" />
-                    </Button>
+                    <div className="mt-3 grid grid-cols-[1fr_1fr_auto] gap-2">
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        placeholder={`Weight (${units})`}
+                        value={draft.weight}
+                        onChange={(event) => setDraftValue(exercise.key, "weight", event.target.value)}
+                        className="h-11 rounded-2xl border-white/8 bg-white/[0.03]"
+                      />
+                      <Input
+                        type="number"
+                        inputMode="numeric"
+                        placeholder="Reps"
+                        value={draft.reps}
+                        onChange={(event) => setDraftValue(exercise.key, "reps", event.target.value)}
+                        className="h-11 rounded-2xl border-white/8 bg-white/[0.03]"
+                      />
+                      <Button className="h-11 rounded-2xl px-4" onClick={() => queueSet(exercise.key)}>
+                        Log
+                      </Button>
+                    </div>
+
+                    {draft.pendingSets.length > 0 ? (
+                      <div className={`${subtlePanelClass} mt-3 space-y-2 p-3`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
+                            Current Session
+                          </p>
+                          <div className="flex gap-2">
+                            <Button
+                              variant="ghost"
+                              className="h-8 rounded-xl px-2 text-xs text-slate-400"
+                              onClick={() => clearSessionDraft(exercise.key)}
+                            >
+                              Clear
+                            </Button>
+                            <Button
+                              className="h-8 rounded-xl px-3 text-xs"
+                              onClick={() => saveSessionDraft(exercise.key)}
+                            >
+                              Save
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {draft.pendingSets.map((set) => (
+                            <button
+                              key={set.id}
+                              type="button"
+                              className="inline-flex items-center gap-2 rounded-full border border-white/8 bg-white/[0.03] px-3 py-1 text-sm text-slate-200"
+                              onClick={() => removePendingSet(exercise.key, set.id)}
+                            >
+                              <span className="tabular-nums">
+                                {set.weight}x{set.reps}
+                              </span>
+                              {set.tag ? <span className="text-xs text-green-200">{set.tag}</span> : null}
+                              <X className="h-3 w-3 text-slate-400" />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
-
-                  {exercise.totalSets < 2 && (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Add at least 2 sets to unlock trend charts.
-                    </p>
-                  )}
-                </div>
-              );
-            })}
+                );
+              })}
             </div>
           </div>
         )}
@@ -2163,288 +1585,27 @@ function App() {
     );
   };
 
-  const renderCurrentWorkout = () => {
-    if (!currentWorkout) {
-      return (
-        <Card className="border-border/70 bg-card/70 backdrop-blur-sm">
-          <CardContent className="py-12 text-center text-muted-foreground">
-            No active workout yet.
-            <br />
-            Tap the center + to start.
-          </CardContent>
-        </Card>
-      );
-    }
-
-    return (
-      <Card className="border-border/70 bg-gradient-to-br from-card to-emerald-950/10 shadow-sm">
-        <CardHeader className="space-y-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <CardTitle className="text-xl">{currentWorkout.name}</CardTitle>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {new Date(currentWorkout.date).toLocaleDateString()} • {currentWorkout.exercises.length} exercises
-              </p>
-              <div className="mt-2 flex flex-wrap gap-1">
-                {sessionContextOptions.map((tag) => (
-                  <Button
-                    key={`ctx-${tag}`}
-                    type="button"
-                    variant={currentWorkout.contextTag === tag ? "default" : "outline"}
-                    className="h-7 px-2 text-[11px]"
-                    onClick={() => setCurrentWorkoutContextTag(tag)}
-                  >
-                    {tag}
-                  </Button>
-                ))}
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                className="h-11 min-w-11 border-emerald-600/30"
-                onClick={() => setIsAddSheetOpen(true)}
-              >
-                Add Exercise
-              </Button>
-              <Button
-                className="h-11 min-w-11 bg-gradient-to-r from-emerald-600 to-emerald-700"
-                onClick={() => setIsFinishDialogOpen(true)}
-              >
-                Finish
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-
-        <CardContent className="space-y-3">
-          {currentWorkout.exercises.length === 0 ? (
-            <p className="py-3 text-sm text-muted-foreground">
-              No exercises yet. Add one to start logging sets.
-            </p>
-          ) : (
-            currentWorkout.exercises.map((exercise) => {
-              const minReps = Math.min(...exercise.sets.map((set) => set.reps));
-              const maxReps = Math.max(...exercise.sets.map((set) => set.reps));
-              const repsSummary = exercise.sets.length > 0 ? `${minReps}-${maxReps}` : "0";
-
-              return (
-                <Collapsible
-                  key={exercise.id}
-                  open={expandedExerciseId === exercise.id}
-                  onOpenChange={(open) => setExpandedExerciseId(open ? exercise.id : null)}
-                >
-                  <button
-                    type="button"
-                    className="w-full rounded-lg px-3 py-3 transition-colors hover:bg-secondary/40 active:scale-[0.99]"
-                    onClick={() =>
-                      setExpandedExerciseId((prev) => (prev === exercise.id ? null : exercise.id))
-                    }
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="text-left">
-                        <p className="text-lg font-semibold">{exercise.name}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {exercise.sets.length} sets • {repsSummary} reps
-                        </p>
-                      </div>
-                      <ChevronDown
-                        className={`h-6 w-6 transition-transform ${
-                          expandedExerciseId === exercise.id ? "rotate-180" : ""
-                        }`}
-                      />
-                    </div>
-                  </button>
-
-                  <CollapsibleContent>
-                    <div className="space-y-4 px-2 pb-3">
-                      {exercise.sets.map((set, setIndex) => (
-                        <div
-                          key={set.id}
-                          className="rounded-lg border border-border/60 bg-background/60 p-3"
-                        >
-                          <div className="grid grid-cols-[1fr_1fr_auto] items-center gap-2">
-                            <div className="space-y-2">
-                              <p className="text-xs text-muted-foreground">Weight</p>
-                              <div className="flex items-center gap-1">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-11 w-11"
-                                  onClick={() =>
-                                    updateSet(
-                                      exercise.id,
-                                      setIndex,
-                                      "weight",
-                                      Math.max(0, set.weight - 5),
-                                    )
-                                  }
-                                >
-                                  -5
-                                </Button>
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  value={set.weight}
-                                  className="h-12 text-center text-3xl font-bold"
-                                  onChange={(event) =>
-                                    updateSet(
-                                      exercise.id,
-                                      setIndex,
-                                      "weight",
-                                      Math.max(0, Number(event.target.value) || 0),
-                                    )
-                                  }
-                                />
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-11 w-11"
-                                  onClick={() =>
-                                    updateSet(exercise.id, setIndex, "weight", set.weight + 5)
-                                  }
-                                >
-                                  +5
-                                </Button>
-                              </div>
-                            </div>
-
-                            <div className="space-y-2">
-                              <p className="text-xs text-muted-foreground">Reps</p>
-                              <div className="flex items-center gap-1">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-11 w-11"
-                                  onClick={() =>
-                                    updateSet(
-                                      exercise.id,
-                                      setIndex,
-                                      "reps",
-                                      Math.max(0, set.reps - 1),
-                                    )
-                                  }
-                                >
-                                  -1
-                                </Button>
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  value={set.reps}
-                                  className="h-12 text-center text-3xl font-bold"
-                                  onChange={(event) =>
-                                    updateSet(
-                                      exercise.id,
-                                      setIndex,
-                                      "reps",
-                                      Math.max(0, Number(event.target.value) || 0),
-                                    )
-                                  }
-                                />
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-11 w-11"
-                                  onClick={() =>
-                                    updateSet(exercise.id, setIndex, "reps", set.reps + 1)
-                                  }
-                                >
-                                  +1
-                                </Button>
-                              </div>
-                            </div>
-
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-11 w-11 text-muted-foreground hover:text-destructive"
-                              onClick={() => deleteSet(exercise.id, setIndex)}
-                            >
-                              <Trash2 className="h-5 w-5" />
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
-              );
-            })
-          )}
-        </CardContent>
-      </Card>
-    );
-  };
-
-  const renderWorkouts = () => (
-    <div className="space-y-6">
-      <h2 className="text-2xl font-semibold">Workouts</h2>
-      {renderCurrentWorkout()}
-
-      <div>
-        <h3 className="mb-3 text-lg font-semibold">History</h3>
-        <div className="space-y-3">
-          {workoutsTabHistory.length === 0 ? (
-            <Card className="border-border/70 bg-card/70">
-              <CardContent className="py-8 text-center text-muted-foreground">
-                No past workouts yet.
-              </CardContent>
-            </Card>
-          ) : (
-            workoutsTabHistory.map((workout) => (
-              <Card key={workout.id} className="gradient-card">
-                <CardHeader className="pb-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <CardTitle className="text-lg">{workout.name}</CardTitle>
-                      <p className="text-sm text-muted-foreground">
-                        {new Date(workout.date).toLocaleDateString()} • {workout.exercises.length} exercises
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        className="h-11 min-w-11 border-emerald-600/30"
-                        onClick={() => startWorkout(workout)}
-                      >
-                        Use as Template
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        className="h-11 min-w-11 text-red-400 hover:text-red-300"
-                        onClick={() => deleteWorkoutEntry(workout)}
-                      >
-                        Delete
-                      </Button>
-                    </div>
-                  </div>
-                </CardHeader>
-              </Card>
-            ))
-          )}
-        </div>
-      </div>
-    </div>
-  );
-
   const renderProfile = () => (
     <div className="space-y-4">
-      <h2 className="text-2xl font-semibold">Profile</h2>
+      <div>
+        <h1 className="text-3xl font-semibold">Profile</h1>
+        <p className="text-sm text-slate-400">Storage, sync, and units.</p>
+      </div>
 
-      <Card className="gradient-card">
+      <Card className={shellClass}>
         <CardHeader className="pb-2">
           <CardTitle className="text-lg">Data Storage</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
-          <p className="text-muted-foreground">Converging to your better self</p>
-          <p className="text-muted-foreground">Joined: {new Date(joinDate).toLocaleDateString()}</p>
-          <p className="text-muted-foreground">Total workouts: {history.length}</p>
+          <p className="text-slate-400">Joined: {new Date(joinDate).toLocaleDateString()}</p>
+          <p className="text-slate-400">Exercises tracked: {exercises.length}</p>
+
           {!cloudOptIn ? (
             <>
-              <p className="text-muted-foreground">
-                Local-only mode: data persists on this device, but won&apos;t sync across devices.
+              <p className="text-slate-400">
+                Local-only mode keeps data on this device. Enable cloud save if you want sync across devices.
               </p>
-              <Button className="h-10" onClick={() => setCloudOptIn(true)}>
+              <Button className="h-10 rounded-xl" onClick={() => setCloudOptIn(true)}>
                 Enable Cloud Save
               </Button>
             </>
@@ -2454,27 +1615,27 @@ function App() {
             </p>
           ) : authUser ? (
             <div className="space-y-2">
-              <p className="text-muted-foreground">Signed in as {authUser.email}</p>
+              <p className="text-slate-400">Signed in as {authUser.email}</p>
               <div className="flex gap-2">
                 <Button
                   variant="outline"
-                  className="h-10 border-emerald-600/30"
+                  className="h-10 rounded-xl border-green-600/30"
                   onClick={() => void syncCloudNow()}
                   disabled={isSyncingCloud}
                 >
                   {isSyncingCloud ? "Syncing..." : "Sync Now"}
                 </Button>
-                <Button variant="outline" className="h-10 border-emerald-600/30" onClick={() => void signOut()}>
+                <Button variant="outline" className="h-10 rounded-xl border-green-600/30" onClick={() => void signOut()}>
                   Log Out
                 </Button>
               </div>
             </div>
           ) : (
             <div className="space-y-2">
-              <div className="rounded-md border border-border/70 bg-background/50 px-3 py-2 text-xs text-muted-foreground">
-                <p>1. Sign up with email + password.</p>
-                <p>2. Verify your email from inbox/spam.</p>
-                <p>3. Return here and tap Log In.</p>
+              <div className="rounded-xl border border-border/70 bg-background/50 px-3 py-2 text-xs text-muted-foreground">
+                <p>1. Sign up with email and password.</p>
+                <p>2. Verify your email.</p>
+                <p>3. Return here and tap log in.</p>
               </div>
               <Input
                 type="email"
@@ -2491,12 +1652,12 @@ function App() {
                 onChange={(event) => setAuthPassword(event.target.value)}
               />
               <div className="flex gap-2">
-                <Button className="h-10" onClick={() => void signUpWithEmail()} disabled={isAuthLoading}>
+                <Button className="h-10 rounded-xl" onClick={() => void signUpWithEmail()} disabled={isAuthLoading}>
                   Sign Up
                 </Button>
                 <Button
                   variant="outline"
-                  className="h-10 border-emerald-600/30"
+                  className="h-10 rounded-xl border-green-600/30"
                   onClick={() => void signInWithEmail()}
                   disabled={isAuthLoading}
                 >
@@ -2506,635 +1667,177 @@ function App() {
               {needsEmailVerification ? (
                 <Button
                   variant="ghost"
-                  className="h-9 px-2 text-xs text-muted-foreground"
+                  className="h-9 rounded-xl px-2 text-xs text-muted-foreground"
                   onClick={() => void resendVerificationEmail()}
                   disabled={isAuthLoading}
                 >
                   Resend verification email
                 </Button>
               ) : null}
-              <p className="text-xs text-muted-foreground">
-                Email verification is required after sign up.
-              </p>
             </div>
           )}
+
           {authMessage ? (
-            <p className="rounded-md border border-border/70 bg-background/50 px-3 py-2 text-xs text-muted-foreground">
+            <p className="rounded-xl border border-white/6 bg-white/[0.03] px-3 py-2 text-xs text-slate-400">
               {authMessage}
             </p>
           ) : null}
+
           {cloudOptIn ? (
-            <Button variant="ghost" className="h-8 px-2 text-xs text-muted-foreground" onClick={() => setCloudOptIn(false)}>
+            <Button variant="ghost" className="h-8 rounded-xl px-2 text-xs text-muted-foreground" onClick={() => setCloudOptIn(false)}>
               Disable Cloud Save
             </Button>
           ) : null}
         </CardContent>
       </Card>
 
-      <Card className="gradient-card">
+      <Card className={shellClass}>
         <CardHeader className="pb-2">
           <CardTitle className="text-lg">Settings</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <Label className="text-sm text-muted-foreground">Units</Label>
+          <Label className="text-sm text-slate-400">Units</Label>
           <div className="grid grid-cols-2 gap-2">
             <Button
               variant={units === "lbs" ? "default" : "outline"}
-              className="h-11"
+              className="h-11 rounded-xl"
               onClick={() => setUnits("lbs")}
             >
               lbs
             </Button>
             <Button
               variant={units === "kg" ? "default" : "outline"}
-              className="h-11"
+              className="h-11 rounded-xl"
               onClick={() => setUnits("kg")}
             >
               kg
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">
-            Goal configuration and cloud sync are planned for a later phase.
-          </p>
         </CardContent>
       </Card>
     </div>
   );
 
+  const filteredCommonExercises = commonExercises
+    .filter((exercise) => !exercises.some((item) => item.key === normalizeExerciseName(exercise)))
+    .filter((exercise) => exercise.toLowerCase().includes(newExerciseName.toLowerCase().trim()))
+    .slice(0, 8);
+
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <main className="mx-auto h-[calc(100vh-8.2rem)] w-full max-w-5xl overflow-hidden px-2 pt-3 pb-2 sm:px-3 sm:pt-4">
-        {activeTab === "dashboard" && renderDashboard()}
-        {activeTab === "exercises" && renderExercises()}
-        {activeTab === "workouts" && renderWorkouts()}
-        {activeTab === "profile" && renderProfile()}
+      <main className="mx-auto h-[calc(100vh-6.75rem)] w-full max-w-3xl overflow-hidden px-3 pt-3 pb-2">
+        {activeTab === "exercises" ? renderExercises() : renderProfile()}
       </main>
 
       <nav className="safe-area-nav fixed inset-x-0 bottom-0 z-50 border-t border-border/70 bg-background/95 backdrop-blur-xl">
-        <div className="mx-auto w-full max-w-5xl px-2 pt-2 sm:px-3">
-          <div className="grid grid-cols-5 items-end gap-1 rounded-2xl border border-border/70 bg-card/50 px-1 py-1.5">
+        <div className="mx-auto w-full max-w-3xl px-3 pt-2">
+          <div className="grid grid-cols-3 items-end gap-2 rounded-2xl border border-border/70 bg-card/50 p-1.5">
             <Button
               variant="ghost"
-              className={`h-14 w-full flex-col gap-1 rounded-xl px-1 ${
-                activeTab === "dashboard"
-                  ? "bg-background/90 text-emerald-400 shadow-sm"
-                  : "text-muted-foreground"
+              className={`h-14 rounded-xl ${
+                activeTab === "exercises" ? "bg-background/90 text-primary shadow-sm" : "text-muted-foreground"
               }`}
-              onClick={() => navigateToTab("dashboard")}
+              onClick={() => {
+                setActiveTab("exercises");
+                setSelectedExerciseKey(null);
+              }}
             >
               <Dumbbell className="h-5 w-5" />
-              <span className="text-[11px] leading-none">Dashboard</span>
-            </Button>
-
-            <Button
-              variant="ghost"
-              className={`h-14 w-full flex-col gap-1 rounded-xl px-1 ${
-                activeTab === "exercises"
-                  ? "bg-background/90 text-emerald-400 shadow-sm"
-                  : "text-muted-foreground"
-              }`}
-              onClick={() => navigateToTab("exercises")}
-            >
-              <LineChart className="h-5 w-5" />
-              <span className="text-[11px] leading-none">Exercises</span>
+              Exercises
             </Button>
 
             <div className="flex justify-center">
               <Button
-                className="h-16 w-16 -translate-y-3 rounded-full border border-emerald-300/30 bg-gradient-to-br from-emerald-500 via-emerald-600 to-cyan-600 text-white shadow-lg shadow-emerald-900/45 transition-transform duration-200 hover:scale-[1.02] active:scale-95"
-                onClick={() => setIsQuickStartOpen(true)}
+                className="h-14 w-14 -translate-y-3 rounded-full border border-primary/20 bg-primary text-primary-foreground shadow-lg shadow-green-950/30"
+                onClick={() => setIsAddExerciseOpen(true)}
               >
-                <Plus className="h-7 w-7" />
+                <Plus className="h-6 w-6" />
               </Button>
             </div>
 
             <Button
               variant="ghost"
-              className={`h-14 w-full flex-col gap-1 rounded-xl px-1 ${
-                activeTab === "workouts"
-                  ? "bg-background/90 text-emerald-400 shadow-sm"
-                  : "text-muted-foreground"
+              className={`h-14 rounded-xl ${
+                activeTab === "profile" ? "bg-background/90 text-primary shadow-sm" : "text-muted-foreground"
               }`}
-              onClick={() => navigateToTab("workouts")}
-            >
-              <Clock className="h-5 w-5" />
-              <span className="text-[11px] leading-none">Workouts</span>
-            </Button>
-
-            <Button
-              variant="ghost"
-              className={`h-14 w-full flex-col gap-1 rounded-xl px-1 ${
-                activeTab === "profile"
-                  ? "bg-background/90 text-emerald-400 shadow-sm"
-                  : "text-muted-foreground"
-              }`}
-              onClick={() => navigateToTab("profile")}
+              onClick={() => {
+                setActiveTab("profile");
+                setSelectedExerciseKey(null);
+              }}
             >
               <User className="h-5 w-5" />
-              <span className="text-[11px] leading-none">Profile</span>
+              Profile
             </Button>
           </div>
         </div>
       </nav>
 
-      <Dialog open={isDashboardManageOpen} onOpenChange={setIsDashboardManageOpen}>
-        <DialogContent className="max-h-[76vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Dashboard Tracking</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <p className="text-sm font-medium">System Metrics</p>
-              <div className="space-y-2">
-                {defaultDashboardOrder.map((metricId) => {
-                  const metric = dashboardMetrics.find((item) => item.id === metricId);
-                  const enabled = dashboardOrder.includes(metricId);
-                  return (
-                    <button
-                      key={metricId}
-                      type="button"
-                      className="flex w-full items-center justify-between rounded-lg border border-border/70 bg-secondary/20 px-3 py-2 text-left"
-                      onClick={() => toggleSystemMetric(metricId)}
-                    >
-                      <span className="text-sm">{metric?.title ?? metricId}</span>
-                      <span className={`text-xs ${enabled ? "text-emerald-400" : "text-muted-foreground"}`}>
-                        {enabled ? "On" : "Off"}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Exercises</p>
-              <div className="space-y-2">
-                {trackedExercises.slice(0, 12).map((exercise) => {
-                  const enabled = trackedDashboardExercises.includes(exercise.key);
-                  return (
-                    <button
-                      key={`dash-ex-${exercise.key}`}
-                      type="button"
-                      className="flex w-full items-center justify-between rounded-lg border border-border/70 bg-secondary/20 px-3 py-2 text-left"
-                      onClick={() => toggleTrackedExercise(exercise.key)}
-                    >
-                      <span className="text-sm">{exercise.name}</span>
-                      <span className={`text-xs ${enabled ? "text-emerald-400" : "text-muted-foreground"}`}>
-                        {enabled ? "Tracked" : "Add"}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-              {trackedExercises.length > 12 ? (
-                <p className="text-xs text-muted-foreground">Top 12 exercises shown by adjusted load.</p>
-              ) : null}
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={Boolean(goalEditor)} onOpenChange={(open) => !open && setGoalEditor(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Set Goal</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">{goalEditor?.label}</p>
-            <Input
-              type="number"
-              min={0}
-              value={goalEditor?.value ?? ""}
-              onChange={(event) =>
-                setGoalEditor((prev) => (prev ? { ...prev, value: event.target.value } : prev))
-              }
-              placeholder="Enter target value"
-            />
-            {goalEditor?.showDirection ? (
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Goal direction</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    type="button"
-                    variant={goalEditor.direction === "decrease" ? "default" : "outline"}
-                    className="h-9"
-                    onClick={() =>
-                      setGoalEditor((prev) => (prev ? { ...prev, direction: "decrease" } : prev))
-                    }
-                  >
-                    Decrease
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={goalEditor.direction === "increase" ? "default" : "outline"}
-                    className="h-9"
-                    onClick={() =>
-                      setGoalEditor((prev) => (prev ? { ...prev, direction: "increase" } : prev))
-                    }
-                  >
-                    Increase
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="outline" className="h-8 px-2 text-xs" onClick={() => nudgeGoal(1, "add")}>
-                +1
-              </Button>
-              <Button type="button" variant="outline" className="h-8 px-2 text-xs" onClick={() => nudgeGoal(2.5, "add")}>
-                +2.5
-              </Button>
-              <Button type="button" variant="outline" className="h-8 px-2 text-xs" onClick={() => nudgeGoal(5, "add")}>
-                +5
-              </Button>
-              <Button type="button" variant="outline" className="h-8 px-2 text-xs" onClick={() => nudgeGoal(10, "add")}>
-                +10
-              </Button>
-              <Button type="button" variant="outline" className="h-8 px-2 text-xs" onClick={() => nudgeGoal(5, "pct")}>
-                +5%
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Leave blank or set 0 to remove goal.
-            </p>
-          </div>
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="outline">Cancel</Button>
-            </DialogClose>
-            <Button onClick={saveGoal}>Save Goal</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={isBodyweightDialogOpen} onOpenChange={setIsBodyweightDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Log Bodyweight</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1">
-              <Label htmlFor="bodyweight-date">Date</Label>
-              <Input
-                id="bodyweight-date"
-                type="date"
-                value={bodyweightDate}
-                onChange={(event) => setBodyweightDate(event.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="bodyweight-value">Bodyweight ({units})</Label>
-              <Input
-                id="bodyweight-value"
-                type="number"
-                min={0}
-                step={units === "kg" ? 0.1 : 0.1}
-                value={bodyweightValue}
-                onChange={(event) => {
-                  const next = event.target.value;
-                  setBodyweightValue(next === "" ? "" : Number(next));
-                }}
-                placeholder={`Enter ${units}`}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="outline">Cancel</Button>
-            </DialogClose>
-            <Button onClick={saveBodyweightEntry}>Save</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={isQuickStartOpen} onOpenChange={setIsQuickStartOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Start Workout</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Button
-              className="h-11 w-full bg-gradient-to-r from-emerald-600 to-cyan-600"
-              onClick={() => startWorkout()}
-            >
-              Blank Workout
-            </Button>
-            <Button
-              variant="outline"
-              className="h-11 w-full border-emerald-600/30"
-              onClick={() => {
-                setIsQuickStartOpen(false);
-                setIsTemplatePickerOpen(true);
-              }}
-              disabled={history.length === 0}
-            >
-              From Template
-            </Button>
-            <Button
-              variant="outline"
-              className="h-11 w-full border-emerald-600/30"
-              onClick={continueWorkout}
-              disabled={!currentWorkout}
-            >
-              Continue Last
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={isTemplatePickerOpen} onOpenChange={setIsTemplatePickerOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Pick a Template</DialogTitle>
-          </DialogHeader>
-          <div className="max-h-[50vh] space-y-2 overflow-y-auto pr-1">
-            {history.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No saved workouts yet.</p>
-            ) : (
-              history.map((workout) => (
-                <button
-                  key={`template-${workout.id}`}
-                  type="button"
-                  className="w-full rounded-lg border border-border/70 bg-secondary/20 px-3 py-3 text-left transition-colors hover:bg-secondary/40"
-                  onClick={() => startWorkout(workout)}
-                >
-                  <p className="font-medium">{workout.name}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {new Date(workout.date).toLocaleDateString()} • {workout.exercises.length} exercises
-                  </p>
-                </button>
-              ))
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Sheet open={isAddSheetOpen} onOpenChange={setIsAddSheetOpen}>
-        <SheetContent
-          side="bottom"
-          className="mx-auto h-[78vh] max-w-2xl rounded-t-3xl border border-border/80 bg-background"
-        >
-          <SheetHeader>
-            <SheetTitle className="text-2xl">Add Exercise</SheetTitle>
-          </SheetHeader>
-
-          <div className="space-y-6 py-6">
-            <div className="space-y-2">
-              <Label>Exercise Name</Label>
-              <Popover open={isExercisePickerOpen} onOpenChange={setIsExercisePickerOpen}>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="h-12 w-full justify-between text-left text-base"
-                  >
-                    {newExerciseName || "Tap to choose or search"}
-                    <ChevronDown className="h-4 w-4 opacity-70" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-                  <Command>
-                    <CommandInput
-                      placeholder="Search exercise..."
-                      value={exerciseSearch}
-                      onValueChange={setExerciseSearch}
-                    />
-                    <CommandList className="max-h-72">
-                      <CommandEmpty>No results.</CommandEmpty>
-                      <CommandGroup>
-                        {filteredCommonExercises.map((exercise) => (
-                          <CommandItem
-                            key={exercise}
-                            onSelect={() => {
-                              setNewExerciseName(exercise);
-                              setIsExercisePickerOpen(false);
-                            }}
-                          >
-                            {exercise}
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
-
-              <Input
-                className="h-12"
-                placeholder="Or type custom exercise"
-                value={newExerciseName}
-                onChange={(event) => setNewExerciseName(event.target.value)}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Starting Weight ({units})</Label>
-                <Input
-                  className="h-12 text-xl"
-                  type="number"
-                  min={0}
-                  placeholder="225"
-                  value={newWeight}
-                  onChange={(event) =>
-                    setNewWeight(event.target.value ? Number(event.target.value) : "")
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Starting Reps</Label>
-                <Input
-                  className="h-12 text-xl"
-                  type="number"
-                  min={0}
-                  placeholder="8"
-                  value={newReps}
-                  onChange={(event) =>
-                    setNewReps(event.target.value ? Number(event.target.value) : "")
-                  }
-                />
-              </div>
-            </div>
-
-            <Button
-              className="h-12 w-full bg-gradient-to-r from-emerald-600 to-cyan-600"
-              onClick={addExerciseToWorkout}
-              disabled={!newExerciseName.trim() || !newWeight || !newReps}
-            >
-              Add to Workout
-            </Button>
-          </div>
-        </SheetContent>
-      </Sheet>
-
-      <Dialog open={isFinishDialogOpen} onOpenChange={setIsFinishDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Finish Workout</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <Label htmlFor="workout-name">Workout Name</Label>
-            <Input
-              id="workout-name"
-              placeholder="e.g. Push Day Heavy"
-              value={workoutName}
-              onChange={(event) => setWorkoutName(event.target.value)}
-              autoFocus
-            />
-          </div>
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="outline">Cancel</Button>
-            </DialogClose>
-            <Button className="bg-gradient-to-r from-emerald-600 to-cyan-600" onClick={finishWorkout}>
-              Save & Finish
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={isAddExerciseDialogOpen} onOpenChange={setIsAddExerciseDialogOpen}>
-        <DialogContent>
+      <Dialog open={isAddExerciseOpen} onOpenChange={setIsAddExerciseOpen}>
+        <DialogContent className="w-[calc(100vw-1rem)] max-w-sm overflow-hidden p-4 sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Add Exercise</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
-            <Label htmlFor="exercise-name">Exercise Name</Label>
+          <div className="min-w-0 space-y-3">
             <Input
-              id="exercise-name"
-              placeholder="e.g. Bulgarian Split Squat"
-              value={newCatalogExerciseName}
-              onChange={(event) => setNewCatalogExerciseName(event.target.value)}
+              className="w-full min-w-0"
+              placeholder="Exercise name"
+              value={newExerciseName}
+              onChange={(event) => setNewExerciseName(event.target.value)}
             />
+            {filteredCommonExercises.length > 0 ? (
+              <div className="flex max-w-full flex-wrap gap-2 overflow-hidden">
+                {filteredCommonExercises.map((exercise) => (
+                  <Button
+                    key={`suggest-${exercise}`}
+                    type="button"
+                    variant="outline"
+                    className="h-8 max-w-full rounded-full px-3 text-xs"
+                    onClick={() => setNewExerciseName(exercise)}
+                  >
+                    {exercise}
+                  </Button>
+                ))}
+              </div>
+            ) : null}
           </div>
           <DialogFooter>
             <DialogClose asChild>
               <Button variant="outline">Cancel</Button>
             </DialogClose>
-            <Button onClick={addExerciseFromExercisesTab}>Add</Button>
+            <Button onClick={addExercise}>Add</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isBackfillDialogOpen} onOpenChange={setIsBackfillDialogOpen}>
-        <DialogContent>
+      <Dialog open={isHistoricalLogOpen} onOpenChange={setIsHistoricalLogOpen}>
+        <DialogContent className="w-[calc(100vw-1rem)] max-w-sm overflow-hidden p-4 sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Backfill {backfillExerciseName || "Exercise"}</DialogTitle>
+            <DialogTitle>Log Past Set</DialogTitle>
           </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="space-y-1">
-              <Label htmlFor="backfill-date">Session Date</Label>
+          <div className="space-y-3">
+            <Input type="date" value={historicalDate} onChange={(event) => setHistoricalDate(event.target.value)} />
+            <div className="grid grid-cols-2 gap-2">
               <Input
-                id="backfill-date"
-                type="date"
-                value={backfillDate}
-                onChange={(event) => setBackfillDate(event.target.value)}
+                type="number"
+                inputMode="decimal"
+                placeholder={`Weight (${units})`}
+                value={historicalWeight}
+                onChange={(event) => setHistoricalWeight(event.target.value)}
               />
-              {loggedDatesForBackfillExercise.length > 0 ? (
-                <div className="pt-1">
-                  <p className="mb-1 text-[11px] text-muted-foreground">
-                    Already logged on:
-                  </p>
-                  <div className="flex max-w-full gap-1 overflow-x-auto pb-1">
-                    {loggedDatesForBackfillExercise.slice(0, 24).map((date) => (
-                      <span
-                        key={`logged-date-${date}`}
-                        className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-300"
-                      >
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
-                        {new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
-                          month: "short",
-                          day: "numeric",
-                        })}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-
-            <div className="space-y-1">
-              <Label>Session Context</Label>
-              <div className="flex flex-wrap gap-1">
-                {sessionContextOptions.map((tag) => (
-                  <Button
-                    key={`backfill-ctx-${tag}`}
-                    type="button"
-                    variant={backfillContextTag === tag ? "default" : "outline"}
-                    className="h-8 px-2 text-[11px]"
-                    onClick={() => setBackfillContextTag(tag)}
-                  >
-                    {tag}
-                  </Button>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label>Sets</Label>
-                <Button
-                  variant="outline"
-                  className="h-9"
-                  onClick={() =>
-                    setBackfillSetsDraft((prev) => [...prev, { id: uuidv4(), weight: 0, reps: 0 }])
-                  }
-                >
-                  Add Set
-                </Button>
-              </div>
-
-              <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
-                {backfillSetsDraft.map((set, index) => (
-                  <div key={set.id} className="grid grid-cols-[1fr_1fr_auto] gap-2">
-                    <Input
-                      type="number"
-                      min={0}
-                      placeholder={`Weight (${units})`}
-                      value={set.weight || ""}
-                      onChange={(event) => {
-                        const value = Number(event.target.value) || 0;
-                        setBackfillSetsDraft((prev) =>
-                          prev.map((item) => (item.id === set.id ? { ...item, weight: value } : item)),
-                        );
-                      }}
-                    />
-                    <Input
-                      type="number"
-                      min={0}
-                      placeholder="Reps"
-                      value={set.reps || ""}
-                      onChange={(event) => {
-                        const value = Number(event.target.value) || 0;
-                        setBackfillSetsDraft((prev) =>
-                          prev.map((item) => (item.id === set.id ? { ...item, reps: value } : item)),
-                        );
-                      }}
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-10 w-10"
-                      onClick={() => {
-                        setBackfillSetsDraft((prev) =>
-                          prev.length === 1 ? prev : prev.filter((item) => item.id !== set.id),
-                        );
-                      }}
-                      disabled={backfillSetsDraft.length === 1 && index === 0}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
+              <Input
+                type="number"
+                inputMode="numeric"
+                placeholder="Reps"
+                value={historicalReps}
+                onChange={(event) => setHistoricalReps(event.target.value)}
+              />
             </div>
           </div>
-
           <DialogFooter>
             <DialogClose asChild>
               <Button variant="outline">Cancel</Button>
             </DialogClose>
-            <Button onClick={saveBackfillSession}>Save Session</Button>
+            <Button onClick={saveHistoricalSet}>Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
