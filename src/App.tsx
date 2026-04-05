@@ -556,6 +556,9 @@ function App() {
   });
   const [historicalWeight, setHistoricalWeight] = useState("");
   const [historicalReps, setHistoricalReps] = useState("");
+  const [historicalPendingSets, setHistoricalPendingSets] = useState<Array<{ id: string; weight: number; reps: number }>>(
+    [],
+  );
   const touchStateRef = useRef<{ key: string; startX: number } | null>(null);
 
   const [cloudOptIn, setCloudOptIn] = useState<boolean>(
@@ -1019,15 +1022,29 @@ function App() {
     setHistoricalExerciseKey(exerciseKey);
     setHistoricalWeight("");
     setHistoricalReps("");
+    setHistoricalPendingSets([]);
     setIsHistoricalLogOpen(true);
   };
 
-  const saveHistoricalSet = () => {
-    if (!historicalExerciseKey) return;
+  const addHistoricalPendingSet = () => {
     const weight = Number(historicalWeight);
     const reps = Number(historicalReps);
     if (!Number.isFinite(weight) || !Number.isFinite(reps) || weight <= 0 || reps <= 0) return;
+    setHistoricalPendingSets((prev) => [...prev, { id: uuidv4(), weight, reps }]);
+    setHistoricalWeight("");
+    setHistoricalReps("");
+    triggerHaptic();
+  };
+
+  const removeHistoricalPendingSet = (pendingSetId: string) => {
+    setHistoricalPendingSets((prev) => prev.filter((set) => set.id !== pendingSetId));
+    triggerHaptic();
+  };
+
+  const saveHistoricalSet = () => {
+    if (!historicalExerciseKey || historicalPendingSets.length === 0) return;
     const isoDate = new Date(`${historicalDate}T12:00:00`).toISOString();
+    const sessionId = uuidv4();
     setExercises((prev) =>
       sortExercises(
         prev.map((exercise) =>
@@ -1036,12 +1053,13 @@ function App() {
                 ...exercise,
                 entries: sortEntries([
                   ...exercise.entries,
-                  {
-                    id: uuidv4(),
+                  ...historicalPendingSets.map((set) => ({
+                    id: set.id,
                     date: isoDate,
-                    weight,
-                    reps,
-                  },
+                    weight: set.weight,
+                    reps: set.reps,
+                    sessionId,
+                  })),
                 ]),
               }
             : exercise,
@@ -1051,6 +1069,7 @@ function App() {
     setIsHistoricalLogOpen(false);
     setHistoricalWeight("");
     setHistoricalReps("");
+    setHistoricalPendingSets([]);
     triggerHaptic();
   };
 
@@ -1929,11 +1948,11 @@ function App() {
       <Dialog open={isHistoricalLogOpen} onOpenChange={setIsHistoricalLogOpen}>
         <DialogContent className="w-[calc(100vw-1rem)] max-w-sm overflow-hidden p-4 sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Log Past Set</DialogTitle>
+            <DialogTitle>Log Past Session</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <Input type="date" value={historicalDate} onChange={(event) => setHistoricalDate(event.target.value)} />
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
               <Input
                 type="number"
                 inputMode="decimal"
@@ -1948,13 +1967,43 @@ function App() {
                 value={historicalReps}
                 onChange={(event) => setHistoricalReps(event.target.value)}
               />
+              <Button className="rounded-xl px-3" onClick={addHistoricalPendingSet}>
+                Add
+              </Button>
             </div>
+            {historicalPendingSets.length > 0 ? (
+              <div className="space-y-2 rounded-2xl border border-green-500/10 bg-green-500/[0.03] p-3">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Sets</p>
+                <div className="space-y-2">
+                  {historicalPendingSets.map((set, index) => (
+                    <div
+                      key={set.id}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-white/6 bg-white/[0.03] px-3 py-2"
+                    >
+                      <p className="text-sm tabular-nums text-slate-200">
+                        {index + 1}. {set.weight} x {set.reps}
+                      </p>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8 rounded-full text-slate-400"
+                        onClick={() => removeHistoricalPendingSet(set.id)}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
           <DialogFooter>
             <DialogClose asChild>
               <Button variant="outline">Cancel</Button>
             </DialogClose>
-            <Button onClick={saveHistoricalSet}>Save</Button>
+            <Button onClick={saveHistoricalSet} disabled={historicalPendingSets.length === 0}>
+              Save Session
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
